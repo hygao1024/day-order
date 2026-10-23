@@ -50,8 +50,10 @@ struct CalendarView: View {
                 .disabled(!model.canMoveMonth(-1))
                 .help("上个月（Page Up）")
                 .accessibilityLabel("上个月")
-                Button("今天") { model.goToToday() }
-                    .help("回到今天（Home）")
+                Button { model.goToToday() } label: {
+                    Text("今天").frame(height: 18)
+                }
+                .help("回到今天（Home）")
                 Button { model.moveMonth(1) } label: {
                     Image(systemName: "chevron.right").frame(width: 12, height: 18)
                 }
