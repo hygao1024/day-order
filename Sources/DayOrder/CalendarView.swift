@@ -12,6 +12,7 @@ struct CalendarView: View {
     @AppStorage("showSolarTerms") private var showSolarTerms = true
     @AppStorage("firstWeekday") private var firstWeekday = 2
     @AppStorage("appearance") private var appearance = "system"
+    @AppStorage("blurEnabled") private var blurEnabled = true
     @AppStorage("menuBarDisplay") private var menuBarDisplay = MenuBarDisplay.iconAndDate.rawValue
     @AppStorage("menuBarDateFormat") private var menuBarDateFormat = MenuBarDateFormat.monthDayWeekday.rawValue
     let updateMenuBar: () -> Void
@@ -26,7 +27,7 @@ struct CalendarView: View {
             if model.showingSettings {
                 settings.padding(12).background(CalendarSurface.settings)
             } else if model.showingYearOverview {
-                YearOverviewView(model: model, firstWeekday: effectiveWeekday)
+                YearOverviewView(model: model, firstWeekday: effectiveWeekday, blurEnabled: blurEnabled)
             } else {
                 calendar
             }
@@ -88,7 +89,7 @@ struct CalendarView: View {
                 .accessibilityHidden(true)
             }
             .padding(12)
-            .background(CalendarSurface.chrome)
+            .background(CalendarSurface.chrome(blurEnabled: blurEnabled))
             Divider().opacity(0.3)
             VStack(spacing: 0) {
                 ForEach(0..<(days.count / 7), id: \.self) { week in
@@ -110,7 +111,7 @@ struct CalendarView: View {
             .padding(.horizontal, 12)
             .background(CalendarSurface.content)
             Divider().opacity(0.3)
-            detail.padding(12).background(CalendarSurface.chrome)
+            detail.padding(12).background(CalendarSurface.chrome(blurEnabled: blurEnabled))
         }
     }
 
@@ -170,7 +171,7 @@ struct CalendarView: View {
     private var settings: some View {
         CalendarSettingsView(model: model,
                              menuBarDisplay: $menuBarDisplay, menuBarDateFormat: $menuBarDateFormat,
-                             appearance: $appearance, firstWeekday: $firstWeekday,
+                             appearance: $appearance, blurEnabled: $blurEnabled, firstWeekday: $firstWeekday,
                              showTraditional: $showTraditional, showCivil: $showCivil,
                              showWestern: $showWestern, showWorldDays: $showWorldDays,
                              showSolarTerms: $showSolarTerms, showHolidaySchedule: $showHolidaySchedule)

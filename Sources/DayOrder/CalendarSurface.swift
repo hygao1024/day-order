@@ -2,8 +2,12 @@ import AppKit
 import SwiftUI
 
 enum CalendarSurface {
-    static var chrome: some View {
-        PopoverMaterial().allowsHitTesting(false).accessibilityHidden(true)
+    @ViewBuilder static func chrome(blurEnabled: Bool) -> some View {
+        if blurEnabled {
+            PopoverMaterial().allowsHitTesting(false).accessibilityHidden(true)
+        } else {
+            settings
+        }
     }
     static let settings = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua

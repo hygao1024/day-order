@@ -251,6 +251,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 throw CocoaError(.coderInvalidValue)
             }
             try await verifyReopen(directory: directory, domain: domain)
+            defaults.set(false, forKey: "blurEnabled")
+            try await saveSnapshot("blur-off-light", to: directory)
+            model.openYearOverview()
+            try await saveSnapshot("blur-off-year-light", to: directory)
+            defaults.set("dark", forKey: "appearance")
+            try await saveSnapshot("blur-off-year-dark", to: directory)
+            model.showingYearOverview = false
+            try await saveSnapshot("blur-off-dark", to: directory)
+            model.showingSettings = true
+            try await saveSnapshot("blur-off-settings-dark", to: directory)
+            model.showingSettings = false
+            defaults.set(true, forKey: "blurEnabled")
+            try await saveSnapshot("blur-on-restored-dark", to: directory)
+            defaults.set("light", forKey: "appearance")
             popover.performClose(nil)
             guard !popover.isShown, keyboardMonitor == nil else { throw CocoaError(.coderInvalidValue) }
             try "真实状态栏弹窗、外观与节日显示快照、跨年选择、日期下界、关闭清理通过。\n"

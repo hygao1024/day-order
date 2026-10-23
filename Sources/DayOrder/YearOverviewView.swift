@@ -5,6 +5,7 @@ import SwiftUI
 struct YearOverviewView: View {
     @ObservedObject var model: CalendarModel
     let firstWeekday: Int
+    let blurEnabled: Bool
     @FocusState private var yearFocused: Bool
 
     var body: some View {
@@ -41,7 +42,7 @@ struct YearOverviewView: View {
                 }
             }
             .padding(12)
-            .background(CalendarSurface.chrome)
+            .background(CalendarSurface.chrome(blurEnabled: blurEnabled))
             Divider().opacity(0.3)
             YearCalendarScrollView(model: model, firstWeekday: firstWeekday)
                 .background(CalendarSurface.content)
@@ -49,7 +50,7 @@ struct YearOverviewView: View {
             Text("滚动浏览年份")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity).padding(.vertical, 7)
-                .background(CalendarSurface.chrome)
+                .background(CalendarSurface.chrome(blurEnabled: blurEnabled))
         }
         .frame(height: 430)
         .onChange(of: model.showingYearEntry) { yearFocused = model.showingYearEntry }

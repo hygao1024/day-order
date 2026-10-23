@@ -7,6 +7,7 @@ struct CalendarSettingsView: View {
     @Binding var menuBarDisplay: String
     @Binding var menuBarDateFormat: String
     @Binding var appearance: String
+    @Binding var blurEnabled: Bool
     @Binding var firstWeekday: Int
     @Binding var showTraditional: Bool
     @Binding var showCivil: Bool
@@ -82,6 +83,9 @@ struct CalendarSettingsView: View {
                     ("跟随系统", "system"), ("浅色", "light"), ("深色", "dark")
                 ])
             }
+            separator
+            toggle("毛玻璃效果", isOn: $blurEnabled)
+                .help("开启后模糊日历上下区域的背景；关闭后使用实色背景")
         }
     }
 
