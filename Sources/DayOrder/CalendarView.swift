@@ -19,7 +19,6 @@ struct CalendarView: View {
     let dismiss: () -> Void
 
     private let weekdays = ["日", "一", "二", "三", "四", "五", "六"]
-    private let accent = Color(red: 0.89, green: 0.20, blue: 0.15)
     private var effectiveWeekday: Int { firstWeekday == 1 ? 1 : 2 }
 
     var body: some View {
@@ -48,7 +47,6 @@ struct CalendarView: View {
 
     private var calendar: some View {
         let month = model.engine.info(for: model.month)
-        let days = model.engine.monthDays(containing: model.month, firstWeekday: effectiveWeekday)
         return VStack(spacing: 0) {
             VStack(spacing: 12) {
                 HStack(spacing: 6) {
@@ -91,25 +89,9 @@ struct CalendarView: View {
             .padding(12)
             .background(CalendarSurface.chrome(blurEnabled: blurEnabled))
             Divider().opacity(0.3)
-            VStack(spacing: 0) {
-                ForEach(0..<(days.count / 7), id: \.self) { week in
-                    if week > 0 { Divider().opacity(0.55) }
-                    HStack(spacing: 2) {
-                        ForEach(Array(days[(week * 7)..<(week * 7 + 7)])) { day in
-                            DayCell(day: day, annotation: visibleAnnotations(day).first,
-                                    holiday: showHolidaySchedule ? model.holidays.day(day) : nil,
-                                    isToday: day.date == model.today, isSelected: day.date == model.selection,
-                                    isInMonth: day.month == month.month, accent: accent) {
-                                model.select(day.date)
-                            }
-                            .disabled(!model.engine.isSupported(day.date))
-                        }
-                    }
-                    .padding(.vertical, 8)
-                }
-            }
-            .padding(.horizontal, 12)
-            .background(CalendarSurface.content)
+            CalendarTimelineView(model: model, firstWeekday: effectiveWeekday, options: contentOptions)
+                .frame(height: 286)
+                .background(CalendarSurface.content)
             Divider().opacity(0.3)
             detail.padding(12).background(CalendarSurface.chrome(blurEnabled: blurEnabled))
         }
@@ -177,97 +159,17 @@ struct CalendarView: View {
                              showSolarTerms: $showSolarTerms, showHolidaySchedule: $showHolidaySchedule)
     }
 
+    private var contentOptions: CalendarContentOptions {
+        CalendarContentOptions(traditional: showTraditional, civil: showCivil, western: showWestern,
+                               worldDays: showWorldDays, solarTerms: showSolarTerms, holidaySchedule: showHolidaySchedule)
+    }
+
     private func visibleAnnotations(_ day: DayInfo) -> [Annotation] {
-        day.annotations.filter {
-            switch $0.kind {
-            case .traditional: showTraditional
-            case .civil: showCivil
-            case .western: showWestern
-            case .worldDay: showWorldDays
-            case .solarTerm: showSolarTerms
-            }
-        }
+        contentOptions.annotations(for: day)
     }
 
     private func applyAppearance() {
         NSApp.appearance = appearance == "light" ? NSAppearance(named: .aqua)
             : appearance == "dark" ? NSAppearance(named: .darkAqua) : nil
-    }
-}
-
-private struct DayCell: View {
-    let day: DayInfo
-    let annotation: Annotation?
-    let holiday: HolidayDay?
-    let isToday: Bool
-    let isSelected: Bool
-    let isInMonth: Bool
-    let accent: Color
-    let action: () -> Void
-    @State private var hovering = false
-    @Environment(\.colorScheme) private var colorScheme
-
-    private var annotationColor: Color {
-        guard isInMonth else { return .secondary }
-        guard let annotation else { return .secondary }
-        if annotation.kind == .solarTerm {
-            return colorScheme == .dark ? Color(red: 0.48, green: 0.74, blue: 0.55)
-                : Color(red: 0.17, green: 0.43, blue: 0.25)
-        }
-        return colorScheme == .dark ? Color(red: 1, green: 0.47, blue: 0.40) : accent
-    }
-
-    private var hoverText: String {
-        [annotation?.title ?? day.lunarFull, holiday?.detail].compactMap { $0 }.joined(separator: " · ")
-    }
-
-    private var accessibilityText: String {
-        var parts = ["\(String(day.year))年\(day.month)月\(day.day)日", day.lunarFull]
-        if let annotation { parts.append(annotation.title) }
-        if let holiday { parts.append(holiday.detail) }
-        if isToday { parts.append("今天") }
-        return parts.joined(separator: "，")
-    }
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 2) {
-                Text("\(day.day)")
-                    .font(.system(size: 16, weight: .regular))
-                    .monospacedDigit()
-                    .foregroundStyle(isToday ? Color.white : .primary)
-                    .frame(width: 26, height: 26)
-                    .background(isToday ? accent : .clear, in: Circle())
-                Text(annotation?.shortTitle ?? day.lunarLabel)
-                    .font(.system(size: 10))
-                    .foregroundStyle(annotationColor)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 40)
-            .background(Color.primary.opacity(isSelected && !isToday ? 0.06 : hovering ? 0.04 : 0),
-                        in: RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                if isSelected && !isToday {
-                    RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
-                }
-            }
-            .overlay(alignment: .topTrailing) {
-                if let holiday {
-                    Text(holiday.badge)
-                        .font(.system(size: 8, weight: .medium))
-                        .foregroundStyle(holiday.isOffDay ? accent : Color.secondary)
-                        .padding(.top, 1).padding(.trailing, 1)
-                        .accessibilityHidden(true)
-                }
-            }
-            .opacity(isInMonth ? 1 : 0.40)
-            .contentShape(RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help(hoverText)
-        .accessibilityLabel(accessibilityText)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

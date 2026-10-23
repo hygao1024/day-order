@@ -8,6 +8,9 @@ final class CalendarModel: ObservableObject {
     @Published var today: Date
     @Published var selection: Date
     @Published var month: Date
+    @Published private(set) var calendarScrollRevision = 0
+    private(set) var calendarScrollTarget: Date
+    var calendarViewport: (date: Date, month: Date, offset: CGFloat)?
     @Published var showingSettings = false
     @Published var showingYearOverview = false
     @Published var yearDraft = ""
@@ -15,6 +18,7 @@ final class CalendarModel: ObservableObject {
     @Published private(set) var overviewTarget = CalendarEngine.years.lowerBound * 100 + 1
     @Published private(set) var overviewScrollRevision = 0
     @Published var holidays = HolidaySchedule()
+    @Published private(set) var holidayRevision = 0
     @Published var holidayUpdatingYear: Int?
     @Published var holidayUpdateMessages: [Int: String] = [:]
     private let holidayRepository: HolidayRepository
@@ -30,7 +34,10 @@ final class CalendarModel: ObservableObject {
             guard !Task.isCancelled else { return }
             // 只排除同年度更新前的旧读取，其他年度仍可加载缓存。
             if let cached, holidayRevisions[target, default: 0] == revision {
-                holidays.years[target] = cached
+                if holidays.years[target]?.days != cached.days {
+                    holidays.years[target] = cached
+                    holidayRevision += 1
+                }
             }
         }
     }
@@ -52,6 +59,7 @@ final class CalendarModel: ObservableObject {
                     try Task.checkCancellation()
                     holidayRevisions[target, default: 0] += 1
                     holidays.years[target] = document
+                    holidayRevision += 1
                     messages.append("\(target)年已更新")
                 } catch {
                     if Task.isCancelled { return }
@@ -83,6 +91,7 @@ final class CalendarModel: ObservableObject {
         today = currentDay
         selection = selectedDay
         month = engine.monthStart(selectedDay)
+        calendarScrollTarget = selectedDay
         holidays = HolidaySchedule(years: (try? HolidayYear.bundled()) ?? [:])
     }
 
@@ -99,8 +108,21 @@ final class CalendarModel: ObservableObject {
         guard engine.isSupported(date) else { return }
         selection = date
         month = engine.monthStart(date)
+        calendarScrollTarget = date
+        calendarViewport = nil
+        calendarScrollRevision += 1
         showingYearOverview = false
         showingYearEntry = false
+    }
+
+    func selectVisibleDay(_ date: Date) {
+        guard engine.isSupported(date) else { return }
+        selection = date
+    }
+
+    func browseMonth(containing date: Date) {
+        let visibleMonth = engine.monthStart(engine.clamped(date))
+        if month != visibleMonth { month = visibleMonth }
     }
 
     func openYearOverview() {
@@ -147,7 +169,9 @@ final class CalendarModel: ObservableObject {
 
     func moveMonth(_ amount: Int) {
         guard canMoveMonth(amount) else { return }
-        select(engine.addingMonths(amount, to: selection))
+        let target = engine.addingMonths(amount, to: month)
+        let parts = engine.calendar.dateComponents([.year, .month], from: target)
+        jumpToMonth(parts.month!, year: parts.year!)
     }
 
     func moveDay(_ amount: Int) {

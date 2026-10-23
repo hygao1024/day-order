@@ -25,3 +25,5 @@ Status: implemented
 最初行内通过 NSHostingView 承载 SwiftUI 小月历，连续滚动仍有较高布局开销；现由[原生小月历绘制](2026-10-23-year-overview-scroll-performance.md)替代，原生列表的复用、滚动定位与导航责任保持不变。
 
 上下固定区域的实色灰阶表面由[系统毛玻璃材质](2026-10-23-popover-material.md)替代，中间日期区与浮动年份标题使用统一实色底，浅色为白色，深色为深灰。
+
+月视图中间的独立月份网格由[连续周滚动](2026-10-24-continuous-calendar.md)替代，年概览保留独立导航层级。

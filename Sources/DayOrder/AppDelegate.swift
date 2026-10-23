@@ -185,6 +185,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 return
             }
             try await saveSnapshot("light-october", to: directory)
+            try await verifyCalendarTimeline(directory: directory)
             defaults.set("dark", forKey: "appearance")
             try await saveSnapshot("summary-frost-dark", to: directory)
             defaults.set("light", forKey: "appearance")
@@ -267,7 +268,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             defaults.set("light", forKey: "appearance")
             popover.performClose(nil)
             guard !popover.isShown, keyboardMonitor == nil else { throw CocoaError(.coderInvalidValue) }
-            try "真实状态栏弹窗、外观与节日显示快照、跨年选择、日期下界、关闭清理通过。\n"
+            try "真实状态栏弹窗、连续周滚动与跨月选择、滚动位置恢复、辅助功能动作、外观与节日快照、年概览导航、日期边界、关闭清理通过。\n"
                 .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
             NSApp.terminate(nil)
         } catch {
@@ -525,6 +526,170 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         try await Task.sleep(for: .milliseconds(400))
         try saveViewSnapshot(button, name: "menubar-icon-and-date", to: directory)
         button.appearance = nil
+    }
+
+    private func calendarTimelineTable() throws -> NSTableView {
+        func find(in view: NSView) -> NSTableView? {
+            if let table = view as? NSTableView, table.identifier?.rawValue == "calendarTimeline" { return table }
+            return view.subviews.lazy.compactMap { find(in: $0) }.first
+        }
+        guard let root = hostingController?.view, let table = find(in: root) else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        return table
+    }
+
+    private func assertCalendarAccent(_ button: NSButton, expected: Bool) throws {
+        guard let bitmap = button.bitmapImageRepForCachingDisplay(in: button.bounds) else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        button.cacheDisplay(in: button.bounds, to: bitmap)
+        var colored = false
+        for y in 0..<bitmap.pixelsHigh {
+            for x in 0..<bitmap.pixelsWide {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB), color.alphaComponent > 0.5 else { continue }
+                let components = [color.redComponent, color.greenComponent, color.blueComponent]
+                if components.max()! - components.min()! > 0.12 { colored = true }
+            }
+        }
+        guard colored == expected else {
+            fputs("月份区块配色错误：\(button.title)，预期彩色=\(expected)，实际=\(colored)\n", stderr)
+            throw CocoaError(.coderInvalidValue)
+        }
+    }
+
+    private func verifyCalendarTimeline(directory: URL) async throws {
+        guard let model else { throw CocoaError(.coderInvalidValue) }
+        let behavior = popover.behavior
+        popover.behavior = .applicationDefined
+        defer { popover.behavior = behavior }
+        defaults.set(1, forKey: "firstWeekday")
+        model.select(model.engine.date(2026, 10, 23))
+        try await Task.sleep(for: .milliseconds(400))
+        let table = try calendarTimelineTable()
+        guard let scroll = table.enclosingScrollView else { throw CocoaError(.coderInvalidValue) }
+        let timeline = CalendarTimeline(engine: model.engine, firstWeekday: 1)
+        let firstRow = timeline.weekRow(containing: model.engine.date(2026, 10, 1))
+        guard let firstWeek = table.view(atColumn: 0, row: firstRow, makeIfNecessary: false),
+              let paddingDay = firstWeek.subviews.compactMap({ $0 as? NSButton }).first(where: { $0.title == "2026年9月27日" }),
+              let nationalDay = firstWeek.subviews.compactMap({ $0 as? NSButton }).first(where: { $0.title == "2026年10月1日" }) else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        try assertCalendarAccent(paddingDay, expected: false)
+        try assertCalendarAccent(nationalDay, expected: true)
+        let selected = model.selection
+        let before = scroll.contentView.bounds.minY
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: before + 17))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        try await Task.sleep(for: .milliseconds(200))
+        guard abs(scroll.contentView.bounds.minY - before - 17) < 1, model.selection == selected else {
+            fputs("连续日历小幅滚动被吸附或改变选择\n", stderr)
+            throw CocoaError(.coderInvalidValue)
+        }
+        let octoberRow = timeline.weekRow(containing: model.engine.date(2026, 10, 18))
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: table.rect(ofRow: octoberRow).minY - 20))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        try await saveSnapshot("timeline-october-november", to: directory)
+        let position = scroll.contentView.bounds.minY
+        let novemberRow = timeline.weekRow(containing: model.engine.date(2026, 11, 5))
+        guard let week = table.view(atColumn: 0, row: novemberRow, makeIfNecessary: false),
+              let button = week.subviews.compactMap({ $0 as? NSButton }).first(where: { $0.title == "2026年11月5日" }),
+              let window = button.window else { throw CocoaError(.coderInvalidValue) }
+        guard model.month == model.engine.date(2026, 10, 1),
+              let solarTerm = week.subviews.compactMap({ $0 as? NSButton }).first(where: { $0.title == "2026年11月7日" }) else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        try assertCalendarAccent(solarTerm, expected: true)
+        let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            guard let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { throw CocoaError(.coderInvalidValue) }
+            NSApp.postEvent(event, atStart: false)
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        guard model.selection == model.engine.date(2026, 11, 5),
+              abs(scroll.contentView.bounds.minY - position) < 1 else {
+            fputs("连续日历点击日期失败或导致位置跳动：selection=\(model.selection)，期望偏移=\(position)，实际=\(scroll.contentView.bounds.minY)\n", stderr)
+            throw CocoaError(.coderInvalidValue)
+        }
+        try await saveSnapshot("timeline-selected", to: directory)
+        guard let friday = week.subviews.compactMap({ $0 as? NSButton }).first(where: { $0.title == "2026年11月6日" }),
+              friday.accessibilityRole() == .button, friday.accessibilityPerformPress() else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        try await Task.sleep(for: .milliseconds(150))
+        guard model.selection == model.engine.date(2026, 11, 6),
+              abs(scroll.contentView.bounds.minY - position) < 1 else { throw CocoaError(.coderInvalidValue) }
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: table.rect(ofRow: novemberRow).minY + 11))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        try await Task.sleep(for: .milliseconds(200))
+        guard model.month == model.engine.date(2026, 11, 1) else {
+            fputs("连续日历滚动后标题月份未更新\n", stderr)
+            throw CocoaError(.coderInvalidValue)
+        }
+        try await saveSnapshot("timeline-november-active", to: directory)
+        defaults.set("dark", forKey: "appearance")
+        try await saveSnapshot("timeline-november-active-dark", to: directory)
+        defaults.set("light", forKey: "appearance")
+        let benchmarkOrigin = scroll.contentView.bounds.minY
+        let benchmarkSelection = model.selection
+        var samples: [Double] = []
+        for index in 0..<120 {
+            let step = index < 60 ? index + 1 : 119 - index
+            let start = ProcessInfo.processInfo.systemUptime
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: benchmarkOrigin + CGFloat(step) * 24))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            table.layoutSubtreeIfNeeded()
+            table.window?.displayIfNeeded()
+            samples.append((ProcessInfo.processInfo.systemUptime - start) * 1000)
+            try await Task.sleep(for: .milliseconds(8))
+        }
+        guard model.selection == benchmarkSelection else { throw CocoaError(.coderInvalidValue) }
+        let sorted = samples.sorted()
+        let benchmark: [String: Any] = [
+            "measurement": "主线程滚动、布局与同步绘制耗时，不等于屏幕帧率",
+            "steps": samples.count, "stepPoints": 24,
+            "medianMS": sorted[sorted.count / 2], "p95MS": sorted[Int(Double(sorted.count) * 0.95)],
+            "maxMS": sorted.last!, "samplesMS": samples
+        ]
+        try JSONSerialization.data(withJSONObject: benchmark, options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("timeline-scroll-benchmark.json"))
+        let restoredOffset = table.visibleRect.minY - table.rect(ofRow: novemberRow).minY
+        model.showingSettings = true
+        try await Task.sleep(for: .milliseconds(150))
+        model.showingSettings = false
+        try await Task.sleep(for: .milliseconds(300))
+        let restored = try calendarTimelineTable()
+        // 长列表重建后绝对行坐标可能重新估算，用户可见的周与周内偏移必须保持一致。
+        let actualOffset = restored.visibleRect.minY - restored.rect(ofRow: novemberRow).minY
+        guard abs(actualOffset - restoredOffset) < 1 else {
+            fputs("连续日历退出设置后未恢复周内位置：期望 \(restoredOffset)，实际 \(actualOffset)\n", stderr)
+            throw CocoaError(.coderInvalidValue)
+        }
+        model.moveMonth(1)
+        try await Task.sleep(for: .milliseconds(200))
+        guard model.selection == model.engine.date(2026, 12, 6) else { throw CocoaError(.coderInvalidValue) }
+        defaults.set("dark", forKey: "appearance")
+        model.select(model.engine.date(2026, 12, 31))
+        try await saveSnapshot("timeline-cross-year-dark", to: directory)
+        model.select(model.engine.date(1901, 1, 1))
+        try await saveSnapshot("timeline-lower-bound", to: directory)
+        model.selectVisibleDay(model.engine.date(1900, 12, 31))
+        guard model.selection == model.engine.date(1901, 1, 1) else { throw CocoaError(.coderInvalidValue) }
+        model.select(model.engine.date(2100, 12, 31))
+        try await saveSnapshot("timeline-upper-bound", to: directory)
+        model.selectVisibleDay(model.engine.date(2101, 1, 1))
+        guard model.selection == model.engine.date(2100, 12, 31) else { throw CocoaError(.coderInvalidValue) }
+        defaults.set(2, forKey: "firstWeekday")
+        defaults.set("light", forKey: "appearance")
+        model.select(model.engine.date(2026, 11, 1))
+        try await saveSnapshot("timeline-november-padding-monday", to: directory)
+        model.goToToday()
+        try await saveSnapshot("timeline-today-monday", to: directory)
+        guard model.selection == model.today, model.month == model.engine.monthStart(model.today) else {
+            throw CocoaError(.coderInvalidValue)
+        }
     }
 
     private func verifyOverviewHover(directory: URL) async throws {
