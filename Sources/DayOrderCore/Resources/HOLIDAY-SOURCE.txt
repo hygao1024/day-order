@@ -1,0 +1,35 @@
+中国大陆放假与调休数据：NateScarlet/holiday-cn
+https://github.com/NateScarlet/holiday-cn
+导入版本：29173d8fc96eb300759267c885afcc0e2da1fb12
+导入日期：2026-10-23
+原始年度 JSON 保留 papers 中的国务院公告链接。
+上游部分与周末连休的周末不列为单独记录；应用仅标注明确记录，不推测缺失安排。
+
+https://raw.githubusercontent.com/NateScarlet/holiday-cn/29173d8fc96eb300759267c885afcc0e2da1fb12/2024.json
+SHA-256：a1abda6884a98aa770a1b2a676bd4e69e73bee9d8e4c7e97d82c5d2e480e7661
+https://raw.githubusercontent.com/NateScarlet/holiday-cn/29173d8fc96eb300759267c885afcc0e2da1fb12/2025.json
+SHA-256：33e3023d3af27e158d31196a3cc5096aa089ecd5cd33280fb0b92cd9c9d180c9
+https://raw.githubusercontent.com/NateScarlet/holiday-cn/29173d8fc96eb300759267c885afcc0e2da1fb12/2026.json
+SHA-256：0dcfd8004351e132ce15e8444de4df123265b3f490f7e2f8346631122cb5b709
+
+MIT License
+
+Copyright (c) 2019 NateScarlet
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

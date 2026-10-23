@@ -27,6 +27,24 @@ import Testing
         #expect(engine.info(for: engine.date(2026, 10, 31)).lunarFull == "农历九月廿二")
     }
 
+    @Test func everyObservanceHasBriefSummary() throws {
+        var titles = Set<String>()
+        for offset in 0..<365 {
+            let day = engine.info(for: engine.addingDays(offset, to: engine.date(2026, 1, 1)))
+            for annotation in day.annotations {
+                titles.insert(annotation.title)
+                let summary = try #require(annotation.summary, "\(annotation.title) 缺少简短说明")
+                #expect((10...40).contains(summary.count), "\(annotation.title) 的说明应保持简短")
+            }
+        }
+        #expect(titles.count == 60)
+        let qingming = engine.info(for: engine.date(2026, 4, 5)).annotations
+        #expect(qingming[0].summary != qingming[1].summary)
+        #expect(qingming[0].summary?.contains("祭祖") == true)
+        #expect(qingming[1].summary?.contains("春耕") == true)
+        #expect(Annotation(title: "未收录节日", kind: .civil).summary == nil)
+    }
+
     @Test func lunarFestivalsAndNewYearsEve() {
         let fixtures: [(Int, Int, Int, String)] = [
             (2024, 2, 9, "除夕"), (2025, 1, 28, "除夕"), (2026, 2, 16, "除夕"),
