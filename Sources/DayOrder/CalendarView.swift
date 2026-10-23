@@ -4,6 +4,7 @@ import SwiftUI
 
 struct CalendarView: View {
     @ObservedObject var model: CalendarModel
+    @FocusState private var yearFieldFocused: Bool
     @AppStorage("showTraditional") private var showTraditional = true
     @AppStorage("showCivil") private var showCivil = true
     @AppStorage("showWestern") private var showWestern = true
@@ -37,7 +38,9 @@ struct CalendarView: View {
         .onChange(of: menuBarDisplay) { updateMenuBar() }
         .onChange(of: menuBarDateFormat) { updateMenuBar() }
         .onExitCommand {
-            if model.showingSettings { model.showingSettings = false } else { dismiss() }
+            if model.showingMonthPicker { model.showingMonthPicker = false }
+            else if model.showingSettings { model.showingSettings = false }
+            else { dismiss() }
         }
     }
 
@@ -46,13 +49,26 @@ struct CalendarView: View {
         let days = model.engine.monthDays(containing: model.month, firstWeekday: effectiveWeekday)
         return VStack(spacing: 0) {
             HStack(spacing: 6) {
-                Text("\(String(month.year))年\(month.month)月")
-                    .font(.system(size: 16, weight: .semibold))
+                Button {
+                    if model.showingMonthPicker { model.showingMonthPicker = false }
+                    else { model.openMonthPicker() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("\(String(month.year))年\(month.month)月")
+                            .font(.system(size: 16, weight: .semibold))
+                        Image(systemName: model.showingMonthPicker ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("选择年份和月份")
+                .accessibilityLabel("选择年月，当前\(String(month.year))年\(month.month)月")
                 Spacer(minLength: 0)
                 Button { model.moveMonth(-1) } label: {
                     Image(systemName: "chevron.left").frame(width: 12, height: 18)
                 }
-                .disabled(!model.canMoveMonth(-1))
+                .disabled(model.showingMonthPicker || !model.canMoveMonth(-1))
                 .help("上个月（Page Up）")
                 .accessibilityLabel("上个月")
                 Button { model.goToToday() } label: {
@@ -62,7 +78,7 @@ struct CalendarView: View {
                 Button { model.moveMonth(1) } label: {
                     Image(systemName: "chevron.right").frame(width: 12, height: 18)
                 }
-                .disabled(!model.canMoveMonth(1))
+                .disabled(model.showingMonthPicker || !model.canMoveMonth(1))
                 .help("下个月（Page Down）")
                 .accessibilityLabel("下个月")
             }
@@ -70,31 +86,94 @@ struct CalendarView: View {
             .controlSize(.small)
             .padding(.bottom, 12)
 
-            HStack(spacing: 2) {
-                ForEach(0..<7) { index in
-                    Text(weekdays[(effectiveWeekday - 1 + index) % 7])
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .accessibilityHidden(true)
-            .padding(.bottom, 6)
-
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 7), spacing: 3) {
-                ForEach(days) { day in
-                    DayCell(day: day, annotation: visibleAnnotations(day).first,
-                            isToday: day.date == model.today, isSelected: day.date == model.selection,
-                            isInMonth: day.month == month.month, accent: accent) {
-                        model.select(day.date)
+            if model.showingMonthPicker {
+                monthPicker
+            } else {
+                HStack(spacing: 2) {
+                    ForEach(0..<7) { index in
+                        Text(weekdays[(effectiveWeekday - 1 + index) % 7])
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
                     }
-                    .disabled(!model.engine.isSupported(day.date))
+                }
+                .accessibilityHidden(true)
+                .padding(.bottom, 6)
+
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 7), spacing: 3) {
+                    ForEach(days) { day in
+                        DayCell(day: day, annotation: visibleAnnotations(day).first,
+                                isToday: day.date == model.today, isSelected: day.date == model.selection,
+                                isInMonth: day.month == month.month, accent: accent) {
+                            model.select(day.date)
+                        }
+                        .disabled(!model.engine.isSupported(day.date))
+                    }
+                }
+                .padding(.bottom, 10)
+                Divider()
+                detail.padding(.top, 8)
+            }
+        }
+    }
+
+    private var monthPicker: some View {
+        let current = model.engine.info(for: model.month)
+        let year = model.validMonthPickerYear
+        return VStack(spacing: 12) {
+            HStack(spacing: 8) {
+                Button {
+                    if let year { model.monthPickerYear = String(year - 1) }
+                } label: {
+                    Image(systemName: "chevron.left").frame(width: 18, height: 18)
+                }
+                .disabled(year == nil || year == CalendarEngine.years.lowerBound)
+                .accessibilityLabel("上一年")
+                Spacer()
+                TextField("年份", text: $model.monthPickerYear)
+                    .font(.system(size: 16, weight: .medium).monospacedDigit())
+                    .multilineTextAlignment(.center)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 76)
+                    .focused($yearFieldFocused)
+                    .accessibilityLabel("年份，1901 至 2100")
+                Text("年").font(.system(size: 13)).foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    if let year { model.monthPickerYear = String(year + 1) }
+                } label: {
+                    Image(systemName: "chevron.right").frame(width: 18, height: 18)
+                }
+                .disabled(year == nil || year == CalendarEngine.years.upperBound)
+                .accessibilityLabel("下一年")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            Text(year == nil ? "请输入 1901–2100 之间的年份" : "输入年份，然后选择月份")
+                .font(.system(size: 11))
+                .foregroundStyle(year == nil ? Color.red : Color.secondary)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+                ForEach(1...12, id: \.self) { month in
+                    Button {
+                        if let year { model.jumpToMonth(month, year: year) }
+                    } label: {
+                        Text("\(month)月")
+                            .font(.system(size: 13, weight: .medium))
+                            .frame(maxWidth: .infinity).frame(height: 38)
+                            .background(Color.primary.opacity(year == current.year && month == current.month ? 0.12 : 0.04),
+                                        in: RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(year == nil)
                 }
             }
-            .padding(.bottom, 10)
-            Divider()
-            detail.padding(.top, 8)
+            HStack {
+                Spacer()
+                Button("取消") { model.showingMonthPicker = false }
+                    .buttonStyle(.bordered).controlSize(.small)
+            }
         }
+        .onAppear { yearFieldFocused = true }
     }
 
     private var detail: some View {

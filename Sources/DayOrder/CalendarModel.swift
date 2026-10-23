@@ -9,6 +9,14 @@ final class CalendarModel: ObservableObject {
     @Published var selection: Date
     @Published var month: Date
     @Published var showingSettings = false
+    @Published var showingMonthPicker = false
+    @Published var monthPickerYear = ""
+
+    var validMonthPickerYear: Int? {
+        guard let year = Int(monthPickerYear.trimmingCharacters(in: .whitespaces)),
+              CalendarEngine.years.contains(year) else { return nil }
+        return year
+    }
 
     init(engine: CalendarEngine, now: Date = Date()) {
         self.engine = engine
@@ -32,6 +40,20 @@ final class CalendarModel: ObservableObject {
         guard engine.isSupported(date) else { return }
         selection = date
         month = engine.monthStart(date)
+        showingMonthPicker = false
+    }
+
+    func openMonthPicker() {
+        monthPickerYear = String(engine.calendar.component(.year, from: month))
+        showingMonthPicker = true
+    }
+
+    func jumpToMonth(_ targetMonth: Int, year: Int) {
+        guard CalendarEngine.years.contains(year), (1...12).contains(targetMonth) else { return }
+        let start = engine.date(year, targetMonth, 1)
+        guard let days = engine.calendar.range(of: .day, in: .month, for: start) else { return }
+        let day = min(engine.calendar.component(.day, from: selection), days.count)
+        select(engine.date(year, targetMonth, day))
     }
 
     func goToToday() {

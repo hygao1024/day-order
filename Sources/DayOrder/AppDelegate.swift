@@ -97,6 +97,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func showPopover() {
         guard let button = statusItem?.button else { return }
         refresh()
+        model?.showingSettings = false
+        model?.monthPickerYear = ""
+        model?.goToToday()
         NSApp.activate(ignoringOtherApps: true)
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
@@ -109,11 +112,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 guard let self, self.popover.isShown, let model = self.model,
                       event.window == self.popover.contentViewController?.view.window else { return false }
                 if event.keyCode == 53 {
-                    if model.showingSettings { model.showingSettings = false }
+                    if model.showingMonthPicker { model.showingMonthPicker = false }
+                    else if model.showingSettings { model.showingSettings = false }
                     else { self.popover.performClose(nil) }
                     return true
                 }
-                guard !model.showingSettings,
+                guard !model.showingSettings, !model.showingMonthPicker,
                       event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return false }
                 switch event.keyCode {
                 case 123: model.moveDay(-1)
@@ -170,6 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             model.today = model.engine.date(2026, 10, 23)
             model.select(model.today)
             try await saveSnapshot("light-october", to: directory)
+            try await verifyMonthPicker(directory: directory)
             defaults.set("dark", forKey: "appearance")
             model.select(model.engine.date(2026, 10, 31))
             try await saveSnapshot("dark-october", to: directory)
@@ -213,6 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             guard model.selection == model.engine.date(1901, 1, 1), !model.canMoveMonth(-1) else {
                 throw CocoaError(.coderInvalidValue)
             }
+            try await verifyReopen(directory: directory, domain: domain)
             popover.performClose(nil)
             guard !popover.isShown, keyboardMonitor == nil else { throw CocoaError(.coderInvalidValue) }
             try "真实状态栏弹窗、外观与节日显示快照、跨年选择、日期下界、关闭清理通过。\n"
@@ -222,6 +228,99 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             fputs("日序冒烟验证失败：\(error)\n", stderr)
             exit(1)
         }
+    }
+
+    private func verifyReopen(directory: URL, domain: String) async throws {
+        guard let model else { throw CocoaError(.coderInvalidValue) }
+        let behavior = popover.behavior
+        popover.behavior = .applicationDefined
+        defer { popover.behavior = behavior }
+        let preferences = NSDictionary(dictionary: defaults.persistentDomain(forName: domain) ?? [:])
+        for screen in ["month", "settings", "month-picker"] {
+            model.select(model.engine.date(2048, 12, 23))
+            if screen == "settings" { model.showingSettings = true }
+            if screen == "month-picker" {
+                model.openMonthPicker()
+                model.monthPickerYear = "无效年份"
+            }
+            model.today = model.engine.addingDays(-1, to: model.engine.today())
+            popover.performClose(nil)
+            togglePopover()
+            let today = model.engine.today()
+            guard popover.isShown, !model.showingSettings, !model.showingMonthPicker,
+                  model.monthPickerYear.isEmpty, model.today == today,
+                  model.selection == model.engine.clamped(today),
+                  model.month == model.engine.monthStart(model.selection),
+                  preferences.isEqual(NSDictionary(dictionary: defaults.persistentDomain(forName: domain) ?? [:])) else {
+                fputs("重新打开未回到今日：\(screen)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+        }
+        try await saveSnapshot("reopened-today", to: directory)
+    }
+
+    private func verifyMonthPicker(directory: URL) async throws {
+        guard let model else { throw CocoaError(.coderInvalidValue) }
+        let original = model.selection
+        // 自动化宿主可能抢走焦点；键盘验证期间固定浮层，避免外部失焦关闭干扰 Esc 结果。
+        let behavior = popover.behavior
+        popover.behavior = .applicationDefined
+        defer { popover.behavior = behavior }
+        showPopover()
+        model.select(original)
+        model.openMonthPicker()
+        guard model.monthPickerYear == "2026" else { throw CocoaError(.coderInvalidValue) }
+        try await saveSnapshot("month-picker", to: directory)
+        model.monthPickerYear = "2048"
+        try await saveSnapshot("month-picker-edited", to: directory)
+        guard let window = hostingController?.view.window,
+              let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                  timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                  context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
+                  isARepeat: false, keyCode: 53) else { throw CocoaError(.coderInvalidValue) }
+        NSApp.postEvent(escape, atStart: false)
+        try await Task.sleep(for: .milliseconds(400))
+        guard !model.showingMonthPicker, popover.isShown, model.selection == original else {
+            fputs("取消验证失败：picker=\(model.showingMonthPicker), popover=\(popover.isShown), selection=\(model.selection == original), monitor=\(keyboardMonitor != nil)\n", stderr)
+            throw CocoaError(.coderInvalidValue)
+        }
+        model.openMonthPicker()
+        model.monthPickerYear = "2048"
+        model.jumpToMonth(12, year: 2048)
+        guard model.selection == model.engine.date(2048, 12, 23), !model.showingMonthPicker else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        try await saveSnapshot("month-jump-result", to: directory)
+        model.openMonthPicker()
+        for invalid in ["", "abc", "1900", "2101"] {
+            model.monthPickerYear = invalid
+            guard model.validMonthPickerYear == nil else { throw CocoaError(.coderInvalidValue) }
+        }
+        try await saveSnapshot("month-picker-invalid", to: directory)
+        let beforeInvalidJump = model.selection
+        for (year, month) in [(1900, 1), (2101, 1), (2026, 0), (2026, 13)] {
+            model.jumpToMonth(month, year: year)
+            guard model.selection == beforeInvalidJump, model.showingMonthPicker else {
+                fputs("无效跳转改变选择：\(year)-\(month)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+        }
+        for (year, month, day) in [(2024, 2, 29), (2025, 2, 28), (1901, 1, 31), (2100, 12, 31)] {
+            model.select(model.engine.date(2026, 1, 31))
+            model.jumpToMonth(month, year: year)
+            guard model.selection == model.engine.date(year, month, day) else {
+                fputs("跳转结果不符：\(year)-\(month)-\(day)，实际 \(model.selection)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+        }
+        model.openMonthPicker()
+        defaults.set("dark", forKey: "appearance")
+        try await saveSnapshot("month-picker-upper-bound-dark", to: directory)
+        model.jumpToMonth(1, year: 1901)
+        model.openMonthPicker()
+        try await saveSnapshot("month-picker-lower-bound-dark", to: directory)
+        model.select(original)
+        defaults.set("light", forKey: "appearance")
     }
 
     private func verifyMenuBar(directory: URL, defaults: UserDefaults, domain: String) async throws {
