@@ -185,6 +185,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 return
             }
             try await saveSnapshot("light-october", to: directory)
+            for appearance in ["light", "dark"] {
+                defaults.set(appearance, forKey: "appearance")
+                defaults.set(2, forKey: "firstWeekday")
+                for (month, day, name) in [(12, 1, "aids"), (12, 3, "disability"), (3, 24, "six-weeks")] {
+                    model.select(model.engine.date(2026, month, day))
+                    try await saveSnapshot("selection-label-\(name)-\(appearance)", to: directory)
+                }
+            }
+            defaults.set("light", forKey: "appearance")
+            model.select(model.today)
             try await verifyCalendarTimeline(directory: directory)
             defaults.set("dark", forKey: "appearance")
             try await saveSnapshot("summary-frost-dark", to: directory)

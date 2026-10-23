@@ -258,7 +258,7 @@ final class CalendarWeekView: NSView {
         super.layout()
         let width = (bounds.width - 24) / 7
         for (index, button) in buttons.enumerated() {
-            button.frame = NSRect(x: 12 + CGFloat(index) * width, y: 8, width: width, height: 40)
+            button.frame = NSRect(x: 12 + CGFloat(index) * width, y: (bounds.height - 46) / 2, width: width, height: 46)
         }
     }
 
@@ -325,7 +325,7 @@ private final class CalendarDayButton: NSButton {
         let muted = NSColor.labelColor.withAlphaComponent(0.30)
         if (selected && !highlightedToday) || isHighlighted {
             NSColor.labelColor.withAlphaComponent(isHighlighted ? 0.09 : 0.06).setFill()
-            let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 0.5), xRadius: 8, yRadius: 8)
+            let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
             path.fill()
             if selected && !highlightedToday {
                 NSColor.labelColor.withAlphaComponent(0.12).setStroke()
@@ -333,7 +333,7 @@ private final class CalendarDayButton: NSButton {
                 path.stroke()
             }
         }
-        let circle = NSRect(x: bounds.midX - 13, y: 0, width: 26, height: 26)
+        let circle = NSRect(x: bounds.midX - 13, y: 3, width: 26, height: 26)
         if highlightedToday { Self.accent.setFill(); NSBezierPath(ovalIn: circle).fill() }
         let weekend = day.weekday == 1 || day.weekday == 7
         drawText(String(day.day), rect: circle, font: .monospacedDigitSystemFont(ofSize: 16, weight: .regular),
@@ -344,10 +344,10 @@ private final class CalendarDayButton: NSButton {
                     : NSColor(srgbRed: 0.17, green: 0.43, blue: 0.25, alpha: 1))
             : (dark ? NSColor(srgbRed: 1, green: 0.47, blue: 0.40, alpha: 1) : Self.accent)
         drawText(annotation?.shortTitle ?? day.lunarLabel,
-                 rect: NSRect(x: 0, y: 28, width: bounds.width, height: 12),
+                 rect: NSRect(x: 0, y: 31, width: bounds.width, height: 12),
                  font: .systemFont(ofSize: 10), color: color)
         if let holiday {
-            drawText(holiday.badge, rect: NSRect(x: bounds.width - 9, y: 0, width: 9, height: 10),
+            drawText(holiday.badge, rect: NSRect(x: bounds.width - 9, y: 3, width: 9, height: 10),
                      font: .systemFont(ofSize: 8, weight: .medium),
                      color: !isInMonth ? muted : holiday.isOffDay ? Self.accent : .secondaryLabelColor)
         }
@@ -360,5 +360,5 @@ private final class CalendarDayButton: NSButton {
     }
     override func viewDidChangeEffectiveAppearance() { needsDisplay = true }
     override var focusRingMaskBounds: NSRect { bounds }
-    override func drawFocusRingMask() { NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill() }
+    override func drawFocusRingMask() { NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4).fill() }
 }
