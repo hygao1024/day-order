@@ -97,7 +97,7 @@ build/DayOrder.app/Contents/MacOS/DayOrder --smoke-test "$PWD/build/holiday-netw
 build/DayOrder.app/Contents/MacOS/DayOrder --smoke-test "$PWD/build/scroll-benchmark" --scroll-benchmark
 ```
 
-该测试执行 240 次固定 40 pt 的往返滚动，生成 `scroll-benchmark.json` 和截图；记录主线程滚动、布局与同步绘制的中位数、第 95 百分位和最大耗时。结果用于同机同配置对比，不等同于屏幕呈现帧率，也不作为跨设备的硬性性能门槛。完整冒烟另行检查月份鼠标点击和辅助功能按钮动作。
+该测试执行 240 次固定 40 pt 的往返滚动，生成 `scroll-benchmark.json` 和截图；记录主线程滚动、布局与同步绘制的中位数、第 95 百分位和最大耗时。结果用于同机同配置对比，不等同于屏幕呈现帧率，也不作为跨设备的硬性性能门槛。完整冒烟另行检查月份鼠标点击和辅助功能按钮动作，并在往返滚动及迟到的鼠标进入通知后检查最多一个月份有悬停灰底。
 
 日期资源已包含在源码目录中，普通构建不需要下载。维护时运行：
 

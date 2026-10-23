@@ -359,6 +359,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard model.yearDraft == "2026" else { throw CocoaError(.coderInvalidValue) }
         try await saveSnapshot("year-overview", to: directory)
         try assertOverviewVisible(year: 2026, month: 9)
+        try await verifyOverviewHover(directory: directory)
         defaults.set(1, forKey: "firstWeekday")
         try await saveSnapshot("year-overview-sunday", to: directory)
         defaults.set(2, forKey: "firstWeekday")
@@ -510,6 +511,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         try await Task.sleep(for: .milliseconds(400))
         try saveViewSnapshot(button, name: "menubar-icon-and-date", to: directory)
         button.appearance = nil
+    }
+
+    private func verifyOverviewHover(directory: URL) async throws {
+        let table = try overviewTable()
+        guard let scroll = table.enclosingScrollView, let window = table.window else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        let origin = scroll.contentView.bounds.origin
+        defer {
+            scroll.contentView.scroll(to: origin)
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+        for offset in [0, 136, 272, 136, 0] {
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: origin.y + CGFloat(offset)))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            table.layoutSubtreeIfNeeded()
+            let rows = table.rows(in: table.visibleRect)
+            let buttons = (rows.location..<NSMaxRange(rows)).flatMap { row -> [NSButton] in
+                guard let pair = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? MonthPairView else { return [] }
+                return pair.subviews.compactMap { $0 as? NSButton }
+            }
+            // 模拟滚动期间迟到的进入通知；实际鼠标位置仍只能命中一个月份。
+            guard let entered = NSEvent.enterExitEvent(with: .mouseEntered, location: .zero, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, trackingNumber: 0, userData: nil) else {
+                throw CocoaError(.coderInvalidValue)
+            }
+            buttons.forEach { $0.mouseEntered(with: entered) }
+            var shaded = 0
+            for button in buttons where button.visibleRect.height > 60 {
+                guard let bitmap = button.bitmapImageRepForCachingDisplay(in: button.bounds) else {
+                    throw CocoaError(.coderInvalidValue)
+                }
+                button.cacheDisplay(in: button.bounds, to: bitmap)
+                guard let edge = bitmap.colorAt(x: bitmap.pixelsWide - 1, y: bitmap.pixelsHigh - 1)?.usingColorSpace(.deviceRGB),
+                      let inside = bitmap.colorAt(x: bitmap.pixelsWide - 4, y: bitmap.pixelsHigh / 2)?.usingColorSpace(.deviceRGB) else {
+                    throw CocoaError(.coderInvalidValue)
+                }
+                let edgeBrightness = edge.redComponent * edge.alphaComponent + 1 - edge.alphaComponent
+                let insideBrightness = inside.redComponent * inside.alphaComponent + 1 - inside.alphaComponent
+                if edgeBrightness - insideBrightness > 0.015 { shaded += 1 }
+            }
+            guard shaded <= 1 else {
+                fputs("年概览滚动残留多个月份悬停灰底：\(shaded)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+        }
+        try await saveSnapshot("year-overview-hover-scrolled", to: directory)
     }
 
     private func benchmarkOverviewScroll(directory: URL) async throws {

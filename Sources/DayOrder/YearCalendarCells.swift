@@ -78,7 +78,7 @@ private final class MiniMonthButton: NSButton {
         title = "\(month.year)年\(month.month)月"
         setAccessibilityLabel(title)
         toolTip = "查看" + title
-        hovered = false
+        refreshHover()
         needsDisplay = true
     }
 
@@ -124,10 +124,44 @@ private final class MiniMonthButton: NSButton {
                                   owner: self, userInfo: nil)
         addTrackingArea(area)
         hoverArea = area
+        refreshHover()
     }
 
-    override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
-    override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        let center = NotificationCenter.default
+        center.removeObserver(self, name: NSView.boundsDidChangeNotification, object: nil)
+        center.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: nil)
+        center.removeObserver(self, name: NSWindow.didResignKeyNotification, object: nil)
+        if let window {
+            if let clip = enclosingScrollView?.contentView {
+                clip.postsBoundsChangedNotifications = true
+                center.addObserver(self, selector: #selector(refreshHover), name: NSView.boundsDidChangeNotification, object: clip)
+            }
+            center.addObserver(self, selector: #selector(refreshHover), name: NSWindow.didBecomeKeyNotification, object: window)
+            center.addObserver(self, selector: #selector(refreshHover), name: NSWindow.didResignKeyNotification, object: window)
+        }
+        refreshHover()
+    }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    // 滚动和行复用可能使进入/离开事件过期，以当前窗口命中结果为准。
+    @objc private func refreshHover() {
+        var inside = false
+        if let window, window.isKeyWindow, let content = window.contentView {
+            let point = content.superview?.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+                ?? window.mouseLocationOutsideOfEventStream
+            inside = content.hitTest(point) === self
+        }
+        if hovered != inside {
+            hovered = inside
+            needsDisplay = true
+        }
+    }
+
+    override func mouseEntered(with event: NSEvent) { refreshHover() }
+    override func mouseExited(with event: NSEvent) { refreshHover() }
     override func viewDidChangeEffectiveAppearance() { needsDisplay = true }
     override var focusRingMaskBounds: NSRect { bounds }
     override func drawFocusRingMask() { NSBezierPath(roundedRect: bounds, xRadius: 5, yRadius: 5).fill() }
