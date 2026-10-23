@@ -5,6 +5,19 @@ import Testing
 @Suite struct CalendarEngineTests {
     let engine = try! CalendarEngine()
 
+    @Test func menuBarDateFormats() {
+        let day = engine.info(for: engine.date(2026, 10, 23))
+        #expect(MenuBarDateFormat.monthDayWeekday.title(for: day) == "10月23日 周五")
+        #expect(MenuBarDateFormat.yearMonthDay.title(for: day) == "2026年10月23日")
+        #expect(MenuBarDateFormat.yearMonthDayWeekday.title(for: day) == "2026年10月23日 周五")
+        #expect(MenuBarDateFormat.numericDate.title(for: day) == "2026-10-23")
+        let newYear = engine.info(for: engine.date(2027, 1, 1))
+        #expect(MenuBarDateFormat.numericDate.title(for: newYear) == "2027-01-01")
+        #expect(MenuBarDateFormat.yearMonthDayWeekday.title(for: newYear) == "2027年1月1日 周五")
+        #expect(MenuBarDateFormat(rawValue: "unknown") == nil)
+        #expect(MenuBarDisplay(rawValue: "unknown") == nil)
+    }
+
     @Test func correctedDesignDates() {
         let day = engine.info(for: engine.date(2026, 10, 23))
         #expect(day.lunarFull == "农历九月十四")

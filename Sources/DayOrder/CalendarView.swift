@@ -11,6 +11,9 @@ struct CalendarView: View {
     @AppStorage("showSolarTerms") private var showSolarTerms = true
     @AppStorage("firstWeekday") private var firstWeekday = 2
     @AppStorage("appearance") private var appearance = "system"
+    @AppStorage("menuBarDisplay") private var menuBarDisplay = MenuBarDisplay.iconAndDate.rawValue
+    @AppStorage("menuBarDateFormat") private var menuBarDateFormat = MenuBarDateFormat.monthDayWeekday.rawValue
+    let updateMenuBar: () -> Void
     let dismiss: () -> Void
 
     private let weekdays = ["日", "一", "二", "三", "四", "五", "六"]
@@ -31,6 +34,8 @@ struct CalendarView: View {
         .preferredColorScheme(appearance == "light" ? .light : appearance == "dark" ? .dark : nil)
         .onAppear(perform: applyAppearance)
         .onChange(of: appearance) { applyAppearance() }
+        .onChange(of: menuBarDisplay) { updateMenuBar() }
+        .onChange(of: menuBarDateFormat) { updateMenuBar() }
         .onExitCommand {
             if model.showingSettings { model.showingSettings = false } else { dismiss() }
         }
@@ -132,6 +137,20 @@ struct CalendarView: View {
                 Text("设置").font(.headline)
                 Spacer()
                 Text("返回").hidden().accessibilityHidden(true)
+            }
+            Divider()
+            Picker("菜单栏显示", selection: $menuBarDisplay) {
+                Text("图标和日期").tag(MenuBarDisplay.iconAndDate.rawValue)
+                Text("仅日期").tag(MenuBarDisplay.dateOnly.rawValue)
+                Text("仅图标").tag(MenuBarDisplay.iconOnly.rawValue)
+            }
+            if menuBarDisplay != MenuBarDisplay.iconOnly.rawValue {
+                Picker("日期格式", selection: $menuBarDateFormat) {
+                    Text("月日＋星期").tag(MenuBarDateFormat.monthDayWeekday.rawValue)
+                    Text("年月日").tag(MenuBarDateFormat.yearMonthDay.rawValue)
+                    Text("年月日＋星期").tag(MenuBarDateFormat.yearMonthDayWeekday.rawValue)
+                    Text("数字日期").tag(MenuBarDateFormat.numericDate.rawValue)
+                }
             }
             Divider()
             Toggle("中国传统节日", isOn: $showTraditional)

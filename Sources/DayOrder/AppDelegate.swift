@@ -4,6 +4,7 @@ import SwiftUI
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+    private var defaults = UserDefaults.standard
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private var model: CalendarModel?
@@ -16,12 +17,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         do {
             let model = CalendarModel(engine: try CalendarEngine())
             self.model = model
-            let view = CalendarView(model: model) { [weak self] in self?.popover.performClose(nil) }
+            let view = CalendarView(model: model, updateMenuBar: { [weak self] in self?.refresh() }) {
+                [weak self] in self?.popover.performClose(nil)
+            }
             var root = AnyView(view)
             #if DEBUG
             if let directory = smokeDirectory {
                 let domain = "com.dayorder.smoke.\(UUID().uuidString)"
                 let defaults = UserDefaults(suiteName: domain)!
+                self.defaults = defaults
                 root = AnyView(view.defaultAppStorage(defaults))
                 Task { @MainActor [weak self] in
                     guard let self else { return }
@@ -39,8 +43,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
             statusItem = item
-            item.button?.image = NSImage(systemSymbolName: "calendar", accessibilityDescription: "日序")
-            item.button?.imagePosition = .imageLeading
             item.button?.target = self
             item.button?.action = #selector(togglePopover)
             item.button?.setAccessibilityLabel("日序日历")
@@ -68,10 +70,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     @objc private func refresh() {
         guard let model else { return }
         model.refreshToday()
+        updateStatusItem()
+    }
+
+    private func updateStatusItem() {
+        guard let model, let button = statusItem?.button else { return }
         let day = model.engine.info(for: model.today)
-        let weekday = ["日", "一", "二", "三", "四", "五", "六"][day.weekday - 1]
-        statusItem?.button?.title = "  \(day.month)月\(day.day)日 周\(weekday)"
-        statusItem?.button?.toolTip = "日序 · \(day.lunarFull)"
+        let display = MenuBarDisplay(rawValue: defaults.string(forKey: "menuBarDisplay") ?? "") ?? .iconAndDate
+        let format = MenuBarDateFormat(rawValue: defaults.string(forKey: "menuBarDateFormat") ?? "") ?? .monthDayWeekday
+        button.title = display == .iconOnly ? "" : (display == .iconAndDate ? "  " : "") + format.title(for: day)
+        button.image = display == .dateOnly ? nil : MenuBarIcon.calendar(day: day.day)
+        button.imagePosition = display == .iconOnly ? .imageOnly : .imageLeading
+        let fullDate = MenuBarDateFormat.yearMonthDayWeekday.title(for: day)
+        button.toolTip = "日序 · \(fullDate) · \(day.lunarFull)"
+        button.setAccessibilityLabel("日序日历，" + fullDate)
     }
 
     @objc private func togglePopover() {
@@ -191,6 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             defaults.set("light", forKey: "appearance")
             model.showingSettings = true
             try await saveSnapshot("settings", to: directory)
+            try await verifyMenuBar(directory: directory, defaults: defaults, domain: domain)
             model.showingSettings = false
             model.select(model.engine.date(2026, 12, 31))
             model.moveDay(1)
@@ -211,9 +224,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
+    private func verifyMenuBar(directory: URL, defaults: UserDefaults, domain: String) async throws {
+        guard let model, let button = statusItem?.button else { throw CocoaError(.coderInvalidValue) }
+        // 通过同一偏好触发 SwiftUI 的 onChange，验证设置确实即时更新状态栏。
+        defaults.set(MenuBarDisplay.dateOnly.rawValue, forKey: "menuBarDisplay")
+        defaults.set(MenuBarDateFormat.yearMonthDay.rawValue, forKey: "menuBarDateFormat")
+        try await Task.sleep(for: .milliseconds(400))
+        let today = model.engine.info(for: model.today)
+        guard button.title == MenuBarDateFormat.yearMonthDay.title(for: today), button.image == nil else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        try saveViewSnapshot(button, name: "menubar-date-only", to: directory)
+        try await saveSnapshot("settings-date-only", to: directory)
+        guard UserDefaults(suiteName: domain)?.string(forKey: "menuBarDisplay") == MenuBarDisplay.dateOnly.rawValue,
+              UserDefaults(suiteName: domain)?.string(forKey: "menuBarDateFormat") == MenuBarDateFormat.yearMonthDay.rawValue else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        defaults.set(MenuBarDisplay.iconOnly.rawValue, forKey: "menuBarDisplay")
+        try await Task.sleep(for: .milliseconds(400))
+        guard button.title.isEmpty, button.image != nil, button.imagePosition == .imageOnly else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        try await saveSnapshot("settings-icon-only", to: directory)
+        for appearance in ["light", "dark"] {
+            defaults.set(appearance, forKey: "appearance")
+            try await Task.sleep(for: .milliseconds(400))
+            button.appearance = NSAppearance(named: appearance == "light" ? .aqua : .darkAqua)
+            for day in [1, 9, 10, 23, 31] {
+                model.today = model.engine.date(2026, 10, day)
+                updateStatusItem()
+                try await Task.sleep(for: .milliseconds(100))
+                guard button.image?.accessibilityDescription == "\(day)日", button.title.isEmpty else {
+                    throw CocoaError(.coderInvalidValue)
+                }
+                try saveViewSnapshot(button, name: "menubar-\(appearance)-\(day)", to: directory)
+            }
+        }
+        // 选择其他日期不改变图标，刷新今天后图标恢复真实日期。
+        model.select(model.engine.date(2027, 1, 1))
+        updateStatusItem()
+        guard button.image?.accessibilityDescription == "31日" else { throw CocoaError(.coderInvalidValue) }
+        refresh()
+        guard button.image?.accessibilityDescription == "\(model.engine.info(for: model.today).day)日" else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        defaults.set("unknown", forKey: "menuBarDisplay")
+        defaults.set("unknown", forKey: "menuBarDateFormat")
+        try await Task.sleep(for: .milliseconds(400))
+        guard button.image != nil, button.title == "  " + MenuBarDateFormat.monthDayWeekday.title(for: model.engine.info(for: model.today)) else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        defaults.set(MenuBarDisplay.iconAndDate.rawValue, forKey: "menuBarDisplay")
+        defaults.set(MenuBarDateFormat.numericDate.rawValue, forKey: "menuBarDateFormat")
+        try await Task.sleep(for: .milliseconds(400))
+        try saveViewSnapshot(button, name: "menubar-icon-and-date", to: directory)
+        button.appearance = nil
+    }
+
     private func saveSnapshot(_ name: String, to directory: URL) async throws {
         try await Task.sleep(for: .milliseconds(400))
         guard let view = hostingController?.view else { throw CocoaError(.coderInvalidValue) }
+        try saveViewSnapshot(view, name: name, to: directory)
+    }
+
+    private func saveViewSnapshot(_ view: NSView, name: String, to directory: URL) throws {
         view.layoutSubtreeIfNeeded()
         guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
             throw CocoaError(.coderInvalidValue)
