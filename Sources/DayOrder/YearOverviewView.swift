@@ -42,9 +42,10 @@ struct YearOverviewView: View {
             }
             .padding(12)
             .background(CalendarSurface.chrome)
-            Divider()
+            Divider().opacity(0.3)
             YearCalendarScrollView(model: model, firstWeekday: firstWeekday)
-            Divider()
+                .background(CalendarSurface.content)
+            Divider().opacity(0.3)
             Text("滚动浏览年份")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity).padding(.vertical, 7)
@@ -66,8 +67,7 @@ private struct YearCalendarScrollView: NSViewRepresentable {
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
-        scroll.drawsBackground = true
-        scroll.backgroundColor = CalendarSurface.contentColor
+        scroll.drawsBackground = false
         let table = NSTableView()
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("months"))
         column.resizingMask = .autoresizingMask
@@ -76,7 +76,7 @@ private struct YearCalendarScrollView: NSViewRepresentable {
         table.headerView = nil
         table.style = .plain
         table.intercellSpacing = .zero
-        table.backgroundColor = CalendarSurface.contentColor
+        table.backgroundColor = .clear
         table.selectionHighlightStyle = .none
         table.floatsGroupRows = true
         table.focusRingType = .none

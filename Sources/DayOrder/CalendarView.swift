@@ -24,7 +24,7 @@ struct CalendarView: View {
     var body: some View {
         VStack(spacing: 0) {
             if model.showingSettings {
-                settings.padding(12)
+                settings.padding(12).background(CalendarSurface.settings)
             } else if model.showingYearOverview {
                 YearOverviewView(model: model, firstWeekday: effectiveWeekday)
             } else {
@@ -32,7 +32,6 @@ struct CalendarView: View {
             }
         }
         .frame(width: 320)
-        .background(CalendarSurface.chrome)
         .preferredColorScheme(appearance == "light" ? .light : appearance == "dark" ? .dark : nil)
         .onAppear(perform: applyAppearance)
         .task(id: model.displayedYear) { await model.loadHolidayCache(year: model.displayedYear) }
@@ -90,7 +89,7 @@ struct CalendarView: View {
             }
             .padding(12)
             .background(CalendarSurface.chrome)
-            Divider()
+            Divider().opacity(0.3)
             VStack(spacing: 0) {
                 ForEach(0..<(days.count / 7), id: \.self) { week in
                     if week > 0 { Divider().opacity(0.55) }
@@ -110,7 +109,7 @@ struct CalendarView: View {
             }
             .padding(.horizontal, 12)
             .background(CalendarSurface.content)
-            Divider()
+            Divider().opacity(0.3)
             detail.padding(12).background(CalendarSurface.chrome)
         }
     }
