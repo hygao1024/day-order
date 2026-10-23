@@ -1,0 +1,13 @@
+农历与节气日期来源：香港天文台《公历与农历日期对照表》，1901–2100 年。
+https://www.hko.gov.hk/en/gts/time/conversion.htm
+逐年原表：https://www.hko.gov.hk/en/gts/time/calendar/text/files/T2026e.txt
+日期按香港标准时间（UTC+8）标注。资源由 scripts/update-calendar-data.py 提取。
+资料来源与版权声明：https://www.hko.gov.hk/en/abouthko/notice.htm
+
+本次导入采用香港天文台对照表的公开存档：
+https://github.com/hungtcs/traditional-chinese-calendar-database
+存档文件：https://raw.githubusercontent.com/hungtcs/traditional-chinese-calendar-database/master/database/all.json.zip
+SHA-256：3945aa14c96521c4af0c0ff9b166d4744311ffcc57545346950910a930706a7b
+已与 187 年官方原表逐日交叉核对；具体年份保存在 calendar-data.json 的 provenance 中。
+未能直连核对的年份：1902–1908、1911、1935、1937、1940、1951、2066。
+存档缺失的 2058-01-01 为农历十二月初七，已对照官方原表确认；月首压缩表示完整覆盖该日。
