@@ -5,6 +5,10 @@ enum YearCalendarLayout {
     static let cardInset: CGFloat = 6
     // 与外边距合计 12 pt，保留两列小月历的原有宽度。
     static let contentInset: CGFloat = 6
+    static let monthContentInset: CGFloat = 8
+    static let monthCornerRadius: CGFloat = 8
+    static let monthHeight: CGFloat = 138
+    static let monthRowHeight: CGFloat = 144
 }
 
 struct MiniMonthLayout {
@@ -38,8 +42,8 @@ final class MonthPairView: NSView {
         let inset = YearCalendarLayout.contentInset
         let gap: CGFloat = 16
         let width = max(0, (bounds.width - 2 * inset - gap) / 2)
-        left.frame = NSRect(x: inset, y: 4, width: width, height: 122)
-        right.frame = NSRect(x: inset + width + gap, y: 4, width: width, height: 122)
+        left.frame = NSRect(x: inset, y: 4, width: width, height: YearCalendarLayout.monthHeight)
+        right.frame = NSRect(x: inset + width + gap, y: 4, width: width, height: YearCalendarLayout.monthHeight)
     }
 }
 
@@ -55,6 +59,11 @@ private final class MiniMonthButton: NSButton, CalendarZoomParticipant {
     override var isFlipped: Bool { true }
 
     private static let accent = NSColor(srgbRed: 0.89, green: 0.20, blue: 0.15, alpha: 1)
+    private static let hoverColor = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(white: 0.15, alpha: 1)
+            : NSColor(srgbRed: 245.0 / 255, green: 245.0 / 255, blue: 245.0 / 255, alpha: 1)
+    }
     private static let days = (1...31).map { CalendarGlyph(String($0), size: 9, color: .labelColor, monospaced: true) }
     private static let todayDays = (1...31).map { CalendarGlyph(String($0), size: 9, color: .white, monospaced: true) }
     private static let weekdays = ["日", "一", "二", "三", "四", "五", "六"].map {
@@ -102,15 +111,18 @@ private final class MiniMonthButton: NSButton, CalendarZoomParticipant {
     override func draw(_ dirtyRect: NSRect) {
         guard let month = monthLayout else { return }
         if hovered || isHighlighted {
-            NSColor.labelColor.withAlphaComponent(isHighlighted ? 0.08 : 0.04).setFill()
-            NSBezierPath(roundedRect: bounds, xRadius: 5, yRadius: 5).fill()
+            (isHighlighted ? NSColor.labelColor.withAlphaComponent(0.08) : Self.hoverColor).setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: YearCalendarLayout.monthCornerRadius,
+                         yRadius: YearCalendarLayout.monthCornerRadius).fill()
         }
+        let inset = YearCalendarLayout.monthContentInset
         let heading = todayDay == nil ? Self.months[month.month - 1] : Self.currentMonths[month.month - 1]
-        heading.draw(at: NSPoint(x: 0, y: 0))
-        let columnWidth = bounds.width / 7
+        heading.draw(at: NSPoint(x: inset, y: inset))
+        let columnWidth = (bounds.width - 2 * inset) / 7
         for column in 0..<7 {
             Self.weekdays[(firstWeekday - 1 + column) % 7]
-                .draw(centeredIn: NSRect(x: CGFloat(column) * columnWidth, y: 22, width: columnWidth, height: 10))
+                .draw(centeredIn: NSRect(x: inset + CGFloat(column) * columnWidth,
+                                       y: inset + 22, width: columnWidth, height: 10))
         }
         for day in 1...month.dayCount {
             if zoomHiddenDays.contains(day) { continue }
@@ -142,8 +154,10 @@ private final class MiniMonthButton: NSButton, CalendarZoomParticipant {
 
     private func dateFrame(_ day: Int, in month: MiniMonthLayout) -> NSRect {
         let index = (month.startingWeekday - firstWeekday + 7) % 7 + day - 1
-        let width = bounds.width / 7
-        return NSRect(x: CGFloat(index % 7) * width, y: 37 + CGFloat(index / 7) * 14, width: width, height: 14)
+        let inset = YearCalendarLayout.monthContentInset
+        let width = (bounds.width - 2 * inset) / 7
+        return NSRect(x: inset + CGFloat(index % 7) * width,
+                      y: inset + 37 + CGFloat(index / 7) * 14, width: width, height: 14)
     }
 
     override func updateTrackingAreas() {
@@ -193,7 +207,10 @@ private final class MiniMonthButton: NSButton, CalendarZoomParticipant {
     override func mouseExited(with event: NSEvent) { refreshHover() }
     override func viewDidChangeEffectiveAppearance() { needsDisplay = true }
     override var focusRingMaskBounds: NSRect { bounds }
-    override func drawFocusRingMask() { NSBezierPath(roundedRect: bounds, xRadius: 5, yRadius: 5).fill() }
+    override func drawFocusRingMask() {
+        NSBezierPath(roundedRect: bounds, xRadius: YearCalendarLayout.monthCornerRadius,
+                     yRadius: YearCalendarLayout.monthCornerRadius).fill()
+    }
 }
 
 final class YearHeaderView: NSView {
@@ -233,7 +250,8 @@ final class YearHeaderView: NSView {
     override func layout() {
         super.layout()
         label.sizeToFit()
-        label.frame.origin = NSPoint(x: YearCalendarLayout.contentInset, y: (bounds.height - label.frame.height) / 2)
+        label.frame.origin = NSPoint(x: YearCalendarLayout.contentInset + YearCalendarLayout.monthContentInset,
+                                     y: (bounds.height - label.frame.height) / 2)
         edit.frame = NSRect(x: label.frame.maxX + 2, y: (bounds.height - 24) / 2, width: 24, height: 24)
     }
 

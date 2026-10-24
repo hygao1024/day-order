@@ -546,6 +546,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             for appearance in ["light", "dark"] {
                 defaults.set(appearance, forKey: "appearance")
                 try await saveSnapshot("year-rounded-\(blur ? "blur" : "solid")-\(appearance)", to: directory)
+                try await saveOverviewMonthFeedback(year: 2026, month: 9,
+                    name: "year-month-hover-\(blur ? "blur" : "solid")-\(appearance)", to: directory)
             }
         }
         defaults.set(2, forKey: "firstWeekday")
@@ -553,10 +555,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         model.select(model.engine.date(2026, 3, 24))
         model.openYearOverview()
         try await saveSnapshot("year-rounded-six-weeks", to: directory)
+        try await saveOverviewMonthFeedback(year: 2026, month: 3, name: "year-month-hover-six-weeks", to: directory)
         defaults.set(blurEnabled, forKey: "blurEnabled")
         model.today = today
         model.select(original)
         defaults.set("light", forKey: "appearance")
+    }
+
+    private func saveOverviewMonthFeedback(year: Int, month: Int, name: String, to directory: URL) async throws {
+        let table = try overviewTable()
+        let row = (year - CalendarEngine.years.lowerBound) * 7 + 1 + (month - 1) / 2
+        guard let pair = table.view(atColumn: 0, row: row, makeIfNecessary: false),
+              let button = pair.subviews.compactMap({ $0 as? NSButton }).first(where: { $0.title == "\(year)年\(month)月" }),
+              let window = button.window, let screen = NSScreen.screens.first,
+              let cursor = CGEvent(source: nil)?.location else { throw CocoaError(.coderInvalidValue) }
+        defer {
+            button.highlight(false)
+            CGWarpMouseCursorPosition(cursor)
+            button.updateTrackingAreas()
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        let point = window.convertPoint(toScreen: button.convert(NSPoint(x: button.bounds.midX, y: 12), to: nil))
+        CGWarpMouseCursorPosition(CGPoint(x: point.x, y: screen.frame.maxY - point.y))
+        button.updateTrackingAreas()
+        try await saveSnapshot(name, to: directory)
+        button.highlight(true)
+        try await saveSnapshot(name + "-pressed", to: directory)
     }
 
     private func verifyMenuBar(directory: URL, defaults: UserDefaults, domain: String) async throws {

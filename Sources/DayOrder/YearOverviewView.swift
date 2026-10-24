@@ -143,7 +143,7 @@ struct YearCalendarScrollView: NSViewRepresentable {
 
         func numberOfRows(in tableView: NSTableView) -> Int { CalendarEngine.years.count * 7 }
         func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-            row % 7 == 0 ? Self.headerHeight : 128
+            row % 7 == 0 ? Self.headerHeight : YearCalendarLayout.monthRowHeight
         }
         func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool { row % 7 == 0 }
         func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
