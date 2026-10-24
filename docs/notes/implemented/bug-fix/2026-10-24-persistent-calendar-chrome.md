@@ -16,6 +16,8 @@ Status: implemented
 
 此决定部分取代[日期缩放过渡](../feature/2026-10-24-calendar-zoom-transition.md)的整页快照接管，以及[弹窗材质](../feature/2026-10-23-popover-material.md)的页面分别创建方式。日期端点、三次缓出、减少动态效果和原有滚动恢复语义继续由缩放记录拥有。
 
+动画阶段的布局测量与位置更新由[显示同步缩放](../architecture/2026-10-24-display-synchronized-calendar-zoom.md)分离；上下栏和材质仍遵循本记录的常驻约束。
+
 ## Alternatives considered
 
 - 继续调整整页快照的交叉淡化：只能修复位图内部的透明度空档，无法消除真实材质的换层。

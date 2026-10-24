@@ -1422,7 +1422,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             try checkChrome()
             var savedMiddle = false
             let began = ProcessInfo.processInfo.systemUptime
-            while ProcessInfo.processInfo.systemUptime - began < 0.42 {
+            while presentation.isTransitioning, ProcessInfo.processInfo.systemUptime - began < 2 {
                 try await Task.sleep(for: .milliseconds(16))
                 try checkChrome()
                 if presentation.isTransitioning, let card = presentation.movingCardFrame, presentation.progress > 0 {
@@ -1434,9 +1434,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                         try saveViewSnapshot(presentation.view, name: name + "-middle", to: directory)
                         savedMiddle = true
                     }
-                    guard (presentation.matchedDayCount > 0) == matched else { throw CocoaError(.coderInvalidValue) }
+                    guard presentation.hasActiveFrameDriver,
+                          (presentation.matchedDayCount > 0) == matched else { throw CocoaError(.coderInvalidValue) }
                 }
             }
+            try checkChrome()
             guard cardHeights.count >= 3, (!matched || positions.count >= 3), savedMiddle, !presentation.isTransitioning,
                   presentation.transitionView == nil, hostingController?.view.alphaValue == 1 else {
                 fputs("月年过渡没有连续中间帧或未清理：\(name)，采样=\(positions.count)，进度=\(presentation.progress)，活动=\(presentation.isTransitioning)，中间帧=\(savedMiddle)，透明度=\(hostingController?.view.alphaValue ?? -1)，尺寸=\(popover.contentSize)\n", stderr)
@@ -1451,7 +1453,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     throw CocoaError(.coderInvalidValue)
                 }
                 guard let low = positions.min(), let high = positions.max(), high - low > 5 else {
-                    fputs("月年过渡的日期没有移动：\(name)\n", stderr)
+                    fputs("月年过渡的日期没有移动：\(name)，位置=\(positions)，时序=\(timing)\n", stderr)
                     throw CocoaError(.coderInvalidValue)
                 }
                 guard let low = cardHeights.min(), let high = cardHeights.max(), high - low > 20,
@@ -1466,12 +1468,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     throw CocoaError(.coderInvalidValue)
                 }
             }
+            let callbacks = presentation.driverCallbackCount
+            try await Task.sleep(for: .milliseconds(40))
+            let timestamps = presentation.displayTimestamps
+            guard !presentation.hasActiveFrameDriver, presentation.driverCallbackCount == callbacks,
+                  timestamps.count >= 3, zip(timestamps, timestamps.dropFirst()).allSatisfy({ $0 < $1 }) else {
+                fputs("月年过渡缺少显示刷新回调或结束后仍有回调：\(name)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
             guard shell.content.alphaValue == 1, shell.transitionCard == nil else {
                 fputs("月年切换后正文或底栏位置未恢复：\(name)\n", stderr)
                 throw CocoaError(.coderInvalidValue)
             }
             report.append(["name": name, "positions": positions, "heights": heights,
-                           "cardHeights": cardHeights, "timing": timing, "chrome": chrome])
+                           "cardHeights": cardHeights, "timing": timing, "chrome": chrome,
+                           "displayTimestamps": timestamps,
+                           "preparationMS": presentation.preparationMilliseconds,
+                           "frameMS": presentation.frameMilliseconds,
+                           "drawingMS": presentation.drawingMilliseconds])
+            try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+                .write(to: directory.appendingPathComponent("zoom-motion.json"))
             try saveViewSnapshot(presentation.view, name: name + "-end", to: directory)
         }
         for (year, month, day, weekday) in [(2026, 10, 24, 1), (2026, 3, 24, 2),
@@ -1521,10 +1537,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             fputs("月年过渡未恢复原可见周及其偏移\n", stderr)
             throw CocoaError(.coderInvalidValue)
         }
-        for interruption in ["reverse", "settings", "close"] {
+        for interruption in ["preparation", "reverse", "settings", "close"] {
             model.openYearOverview()
-            try await Task.sleep(for: .milliseconds(60))
+            if interruption != "preparation" { try await Task.sleep(for: .milliseconds(60)) }
             switch interruption {
+            case "preparation": model.dismissYearLevel()
             case "reverse":
                 guard let window = hostingController?.view.window,
                       let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
@@ -1536,9 +1553,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             default: popover.performClose(nil)
             }
             try await Task.sleep(for: .milliseconds(400))
+            let callbacks = presentation.driverCallbackCount
+            try await Task.sleep(for: .milliseconds(40))
             guard !presentation.isTransitioning, presentation.transitionView == nil,
+                  !presentation.hasActiveFrameDriver, presentation.driverCallbackCount == callbacks,
                   hostingController?.view.alphaValue == 1, model.selection == selection,
-                  interruption != "reverse" || !model.showingYearOverview else {
+                  !["preparation", "reverse"].contains(interruption) || !model.showingYearOverview else {
                 fputs("月年过渡中断后残留遮罩或覆盖选择：\(interruption)\n", stderr)
                 throw CocoaError(.coderInvalidValue)
             }
@@ -1572,8 +1592,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 try await sample("zoom-\(appearance)-\(blur ? "blur" : "solid")-in")
             }
         }
-        try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
-            .write(to: directory.appendingPathComponent("zoom-motion.json"))
     }
 
     private func saveSnapshot(_ name: String, to directory: URL) async throws {

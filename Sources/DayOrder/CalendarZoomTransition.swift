@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import QuartzCore
 import SwiftUI
 
 struct CalendarZoomGlyph {
@@ -73,7 +74,10 @@ final class CalendarPresentationController: NSViewController {
     private let model: CalendarModel
     private let defaults: UserDefaults
     private var subscriptions: Set<AnyCancellable> = []
-    private var task: Task<Void, Never>?
+    private var preparation: Task<Void, Never>?
+    private var displayLink: CADisplayLink?
+    private var animationStarted = 0.0
+    private var animationDuration = 0.22
     private var serial = 0
     private var overlay: CalendarZoomOverlay?
     let material = NSVisualEffectView()
@@ -81,10 +85,16 @@ final class CalendarPresentationController: NSViewController {
     private var targetSize = NSSize(width: 320, height: 430)
     private(set) var progress: CGFloat = 1
     private(set) var elapsedFraction: CGFloat = 1
-    var isTransitioning: Bool { task != nil }
+    var isTransitioning: Bool { overlay != nil }
     var transitionView: NSView? { overlay }
     #if DEBUG
     var reduceMotionOverride: Bool?
+    var hasActiveFrameDriver: Bool { displayLink != nil }
+    private(set) var driverCallbackCount = 0
+    private(set) var displayTimestamps: [Double] = []
+    private(set) var preparationMilliseconds = 0.0
+    private(set) var frameMilliseconds: [Double] = []
+    private(set) var drawingMilliseconds: [Double] = []
     var matchedDayCount: Int { overlay?.matchedDayCount ?? 0 }
     var movingDayFrame: NSRect? { overlay?.movingDayFrame }
     var movingCardFrame: NSRect? { overlay?.cardFrame }
@@ -106,7 +116,7 @@ final class CalendarPresentationController: NSViewController {
         host.contentSizeChanged = { [weak self] size in
             guard let self, size.width > 0, size.height > 0 else { return }
             targetSize = size
-            if task == nil { preferredContentSize = size }
+            if !isTransitioning { preferredContentSize = size }
             view.needsLayout = true
         }
         model.$showingYearOverview.removeDuplicates().dropFirst().sink { [weak self] year in
@@ -133,16 +143,21 @@ final class CalendarPresentationController: NSViewController {
 
     override func viewDidLayout() {
         super.viewDidLayout()
-        host.view.frame = NSRect(origin: .zero, size: targetSize)
+        let hostFrame = NSRect(origin: .zero, size: targetSize)
+        if host.view.frame != hostFrame { host.view.frame = hostFrame }
         overlay?.frame = view.bounds
         material.frame = view.bounds
-        updateMaterial()
     }
 
     func cancelTransition() {
         serial += 1
-        task?.cancel()
-        task = nil
+        preparation?.cancel()
+        preparation = nil
+        displayLink?.invalidate()
+        displayLink = nil
+        #if DEBUG
+        if let overlay { drawingMilliseconds = overlay.drawingMilliseconds }
+        #endif
         overlay?.removeFromSuperview()
         overlay = nil
         transitioningShell?.endTransition()
@@ -166,6 +181,12 @@ final class CalendarPresentationController: NSViewController {
         let interrupted = isTransitioning
         cancelTransition()
         guard !interrupted, view.window?.isVisible == true, !model.showingSettings else { return }
+        #if DEBUG
+        let preparationStarted = ProcessInfo.processInfo.systemUptime
+        displayTimestamps = []
+        frameMilliseconds = []
+        drawingMilliseconds = []
+        #endif
         let parts = model.engine.calendar.dateComponents([.year, .month], from: model.month)
         let month = parts.year! * 100 + parts.month!
         guard let shell = descendants(host.view).compactMap({ $0 as? CalendarShellView }).first,
@@ -182,14 +203,14 @@ final class CalendarPresentationController: NSViewController {
         let request = serial
         progress = 0
         elapsedFraction = 0
-        task = Task { [weak self] in
-            // 让新页面完成首次布局与原生列表定位，再获取真实终点。
-            do { try await Task.sleep(for: .milliseconds(16)) } catch { return }
+        preparation = Task { [weak self] in
+            // 让发布属性完成赋值，随后主动刷新并布局；不额外等待一个固定时间片。
+            await Task.yield()
             guard let self, serial == request, !Task.isCancelled else { return }
             defer {
                 if serial == request {
-                    cancelTransition()
-                    preferredContentSize = targetSize
+                    preparation = nil
+                    if displayLink == nil { finishTransition() }
                 }
             }
             guard model.showingYearOverview == year, view.window?.isVisible == true else { return }
@@ -211,25 +232,66 @@ final class CalendarPresentationController: NSViewController {
             #endif
             reduced = reduced || layer.matchedDayCount == 0
             layer.reducedMotion = reduced
-            let duration = reduced ? 0.12 : 0.22
-            let start = ProcessInfo.processInfo.systemUptime
-            while !Task.isCancelled, serial == request, view.window?.isVisible == true {
-                let time = min(1, (ProcessInfo.processInfo.systemUptime - start) / duration)
-                elapsedFraction = time
-                progress = reduced ? time : 1 - pow(1 - time, 3)
-                layer.progress = progress
-                preferredContentSize = NSSize(width: 320,
-                    height: reduced ? destination.size.height : source.size.height + (destination.size.height - source.size.height) * progress)
-                shell.transitionCard = layer.cardFrame
-                shell.transitionHeight = preferredContentSize.height
-                shell.needsLayout = true
-                view.layoutSubtreeIfNeeded()
-                layer.needsDisplay = true
-                if time == 1 { break }
-                do { try await Task.sleep(for: .milliseconds(8)) } catch { return }
+            shell.beginAnimation()
+            animationDuration = reduced ? 0.12 : 0.22
+            animationStarted = CACurrentMediaTime()
+            #if DEBUG
+            preparationMilliseconds = (ProcessInfo.processInfo.systemUptime - preparationStarted) * 1000
+            #endif
+            applyFrame(time: 0)
+            let target = CalendarDisplayLinkTarget { [weak self] link in
+                guard let self else { link.invalidate(); return }
+                #if DEBUG
+                driverCallbackCount += 1
+                #endif
+                advance(link)
             }
+            let link = view.displayLink(target: target, selector: #selector(CalendarDisplayLinkTarget.tick(_:)))
+            displayLink = link
+            link.add(to: .main, forMode: .common)
         }
     }
+
+    private func advance(_ link: CADisplayLink) {
+        guard displayLink === link else { return }
+        guard view.window?.isVisible == true else { finishTransition(); return }
+        #if DEBUG
+        let frameStarted = ProcessInfo.processInfo.systemUptime
+        displayTimestamps.append(link.targetTimestamp)
+        defer { frameMilliseconds.append((ProcessInfo.processInfo.systemUptime - frameStarted) * 1000) }
+        #endif
+        let time = min(1, max(elapsedFraction, (link.targetTimestamp - animationStarted) / animationDuration))
+        applyFrame(time: time)
+        if time == 1 { finishTransition() }
+    }
+
+    private func applyFrame(time: CGFloat) {
+        guard let overlay, let destination = overlay.destination, let shell = transitioningShell else { return }
+        elapsedFraction = time
+        progress = overlay.reducedMotion ? time : 1 - pow(1 - time, 3)
+        overlay.progress = progress
+        let height = overlay.reducedMotion ? destination.size.height
+            : overlay.source.size.height + (destination.size.height - overlay.source.size.height) * progress
+        shell.updateTransition(card: overlay.cardFrame, height: height)
+        let size = NSSize(width: 320, height: height)
+        if preferredContentSize != size { preferredContentSize = size }
+        overlay.needsDisplay = true
+    }
+
+    private func finishTransition() {
+        cancelTransition()
+        // 释放终点布局缓存后重新测量，接纳动画期间可能更新的日期详情。
+        host.view.layoutSubtreeIfNeeded()
+        targetSize = host.view.fittingSize
+        preferredContentSize = targetSize
+    }
+}
+
+@MainActor
+private final class CalendarDisplayLinkTarget: NSObject {
+    let frame: (CADisplayLink) -> Void
+    init(frame: @escaping (CADisplayLink) -> Void) { self.frame = frame }
+    @objc func tick(_ link: CADisplayLink) { frame(link) }
 }
 
 private final class CalendarPresentationView: NSView {
@@ -243,8 +305,29 @@ private final class CalendarPresentationView: NSView {
 }
 
 private final class CalendarZoomOverlay: NSView {
+    #if DEBUG
+    var drawingMilliseconds: [Double] = []
+    #endif
     let source: CalendarZoomSnapshot
-    var destination: CalendarZoomSnapshot?
+    var destination: CalendarZoomSnapshot? { didSet { prepareTracks() } }
+    private struct Track {
+        let source: CalendarZoomGlyph?
+        let destination: CalendarZoomGlyph?
+        let sourceWeight: CGFloat
+        let destinationWeight: CGFloat
+
+        init(source: CalendarZoomGlyph?, destination: CalendarZoomGlyph?) {
+            self.source = source
+            self.destination = destination
+            func weight(_ glyph: CalendarZoomGlyph?) -> CGFloat {
+                (glyph?.font.fontDescriptor.object(forKey: .traits) as? [NSFontDescriptor.TraitKey: Any])?[.weight] as? CGFloat ?? 0
+            }
+            sourceWeight = weight(source)
+            destinationWeight = weight(destination)
+        }
+    }
+    private var tracks: [Track] = []
+    private(set) var matchedDayCount = 0
     var progress: CGFloat = 0
     var reducedMotion = false
     override var isFlipped: Bool { true }
@@ -253,20 +336,22 @@ private final class CalendarZoomOverlay: NSView {
         self.source = source
         super.init(frame: .zero)
         setAccessibilityElement(false)
+        prepareTracks()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func hitTest(_ point: NSPoint) -> NSView? { cardFrame.contains(point) ? self : nil }
 
-    var matchedDayCount: Int {
-        let days = Set(source.glyphs.map(\.day))
-        return destination?.glyphs.filter { days.contains($0.day) }.count ?? 0
+    private func prepareTracks() {
+        let from = Dictionary(source.glyphs.map { ($0.day, $0) }, uniquingKeysWith: { first, _ in first })
+        let to = Dictionary((destination?.glyphs ?? []).map { ($0.day, $0) }, uniquingKeysWith: { first, _ in first })
+        tracks = Set(from.keys).union(to.keys).sorted().map { Track(source: from[$0], destination: to[$0]) }
+        matchedDayCount = tracks.filter { $0.source != nil && $0.destination != nil }.count
     }
 
     var movingDayFrame: NSRect? {
-        let days = Set(destination?.glyphs.map(\.day) ?? [])
-        guard let a = source.glyphs.first(where: { days.contains($0.day) }),
-              let b = destination?.glyphs.first(where: { $0.day == a.day }) else { return nil }
+        guard let track = tracks.first(where: { $0.source != nil && $0.destination != nil }),
+              let a = track.source, let b = track.destination else { return nil }
         return reducedMotion ? b.frame : interpolate(a.frame, b.frame, progress)
     }
 
@@ -276,6 +361,10 @@ private final class CalendarZoomOverlay: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        #if DEBUG
+        let drawingStarted = ProcessInfo.processInfo.systemUptime
+        defer { drawingMilliseconds.append((ProcessInfo.processInfo.systemUptime - drawingStarted) * 1000) }
+        #endif
         let destination = destination ?? source
         let p = progress
         let outgoing = reducedMotion ? 1 - p : max(0, 1 - p / 0.35)
@@ -289,22 +378,18 @@ private final class CalendarZoomOverlay: NSView {
         drawImage(source, alpha: outgoing)
         drawImage(destination, alpha: incoming)
         NSGraphicsContext.restoreGraphicsState()
-        let from = Dictionary(source.glyphs.map { ($0.day, $0) }, uniquingKeysWith: { first, _ in first })
-        let to = Dictionary(destination.glyphs.map { ($0.day, $0) }, uniquingKeysWith: { first, _ in first })
-        for key in Set(from.keys).union(to.keys).sorted() {
-            if let a = from[key], let b = to[key], !reducedMotion {
+        for track in tracks {
+            if let a = track.source, let b = track.destination, !reducedMotion {
                 let rect = interpolate(a.frame, b.frame, p)
                 let size = a.font.pointSize + (b.font.pointSize - a.font.pointSize) * p
-                let startWeight = (a.font.fontDescriptor.object(forKey: .traits) as? [NSFontDescriptor.TraitKey: Any])?[.weight] as? CGFloat ?? 0
-                let endWeight = (b.font.fontDescriptor.object(forKey: .traits) as? [NSFontDescriptor.TraitKey: Any])?[.weight] as? CGFloat ?? 0
-                let weight = NSFont.Weight(rawValue: startWeight + (endWeight - startWeight) * p)
+                let weight = NSFont.Weight(rawValue: track.sourceWeight + (track.destinationWeight - track.sourceWeight) * p)
                 let font = NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight)
                 let color = a.color.blended(withFraction: p, of: b.color) ?? b.color
-                let glyph = CalendarZoomGlyph(day: key, frame: rect, font: font, color: color, circle: a.circle && b.circle)
+                let glyph = CalendarZoomGlyph(day: a.day, frame: rect, font: font, color: color, circle: a.circle && b.circle)
                 drawGlyph(glyph, frame: rect, font: font, alpha: 1)
             } else {
-                if let a = from[key] { drawGlyph(a, frame: a.frame, font: a.font, alpha: outgoing) }
-                if let b = to[key] { drawGlyph(b, frame: b.frame, font: b.font, alpha: incoming) }
+                if let a = track.source { drawGlyph(a, frame: a.frame, font: a.font, alpha: outgoing) }
+                if let b = track.destination { drawGlyph(b, frame: b.frame, font: b.font, alpha: incoming) }
             }
         }
     }

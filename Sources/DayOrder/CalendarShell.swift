@@ -33,6 +33,17 @@ final class CalendarShellView: NSView {
     var yearOverview = false
     var transitionCard: NSRect?
     var transitionHeight: CGFloat?
+    @MainActor private struct Geometry {
+        let top: CGFloat
+        let bottom: CGFloat
+        let size: NSSize
+        var card: NSRect {
+            NSRect(x: CalendarTimelineView.cardInset, y: top,
+                   width: size.width - 2 * CalendarTimelineView.cardInset,
+                   height: size.height - top - bottom)
+        }
+    }
+    private var animationGeometry: Geometry?
     override var isFlipped: Bool { true }
 
     override init(frame: NSRect) {
@@ -49,28 +60,42 @@ final class CalendarShellView: NSView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    var naturalSize: NSSize {
-        NSSize(width: 320, height: yearOverview ? 430
-               : header.fittingSize.height + CalendarTimelineView.viewportHeight + footer.fittingSize.height)
+    private func measureGeometry() -> Geometry {
+        let top = header.fittingSize.height
+        let bottom = footer.fittingSize.height
+        return Geometry(top: top, bottom: bottom,
+                        size: NSSize(width: 320, height: yearOverview ? 430
+                                     : top + CalendarTimelineView.viewportHeight + bottom))
     }
 
+    var naturalSize: NSSize { (animationGeometry ?? measureGeometry()).size }
     override var intrinsicContentSize: NSSize { naturalSize }
 
     override func layout() {
         super.layout()
-        let top = header.fittingSize.height
-        let bottom = footer.fittingSize.height
-        let size = naturalSize
-        let card = NSRect(x: CalendarTimelineView.cardInset, y: top,
-                          width: 320 - 2 * CalendarTimelineView.cardInset,
-                          height: size.height - top - bottom)
-        let visibleCard = transitionCard ?? card
-        headerClip.frame = NSRect(x: 0, y: 0, width: 320, height: visibleCard.minY)
-        header.frame = NSRect(x: 0, y: 0, width: 320, height: top)
-        content.frame = card
-        footerClip.frame = NSRect(x: 0, y: visibleCard.maxY, width: 320,
-                                  height: max(0, (transitionHeight ?? size.height) - visibleCard.maxY))
-        footer.frame = NSRect(x: 0, y: 0, width: 320, height: bottom)
+        let geometry = animationGeometry ?? measureGeometry()
+        header.frame = NSRect(x: 0, y: 0, width: 320, height: geometry.top)
+        content.frame = geometry.card
+        footer.frame = NSRect(x: 0, y: 0, width: 320, height: geometry.bottom)
+        positionChrome(card: transitionCard ?? geometry.card,
+                       height: transitionHeight ?? geometry.size.height)
+    }
+
+    func beginAnimation() {
+        // 终点布局已确定，短过渡内只移动外壳，不再测量隐藏的 SwiftUI 内容。
+        animationGeometry = measureGeometry()
+    }
+
+    func updateTransition(card: NSRect, height: CGFloat) {
+        transitionCard = card
+        transitionHeight = height
+        positionChrome(card: card, height: height)
+    }
+
+    private func positionChrome(card: NSRect, height: CGFloat) {
+        headerClip.frame = NSRect(x: 0, y: 0, width: 320, height: card.minY)
+        footerClip.frame = NSRect(x: 0, y: card.maxY, width: 320,
+                                  height: max(0, height - card.maxY))
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -81,9 +106,11 @@ final class CalendarShellView: NSView {
     }
 
     func endTransition() {
+        animationGeometry = nil
         transitionCard = nil
         transitionHeight = nil
         content.alphaValue = 1
+        invalidateIntrinsicContentSize()
         needsLayout = true
     }
 }
