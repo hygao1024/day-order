@@ -88,11 +88,11 @@ struct CalendarView: View {
             }
             .padding(12)
             .background(CalendarSurface.chrome(blurEnabled: blurEnabled))
-            Divider().opacity(0.3)
             CalendarTimelineView(model: model, firstWeekday: effectiveWeekday, options: contentOptions)
                 .frame(height: CalendarTimelineView.viewportHeight)
                 .background(CalendarSurface.content)
-            Divider().opacity(0.3)
+                .overlay(alignment: .top) { CalendarSurface.separator }
+                .overlay(alignment: .bottom) { CalendarSurface.separator }
             detail.padding(12).background(CalendarSurface.chrome(blurEnabled: blurEnabled))
         }
     }

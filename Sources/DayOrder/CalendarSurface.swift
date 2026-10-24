@@ -18,6 +18,15 @@ enum CalendarSurface {
             ? NSColor(white: 0.10, alpha: 1) : .white
     }
     static let content = Color(nsColor: contentColor)
+
+    // 实色底覆盖接缝与末行横线，避免透明分隔区透出窗口后方的颜色。
+    static var separator: some View {
+        Color.primary.opacity(0.10)
+            .frame(height: 0.5)
+            .background(content)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
 }
 
 private struct PopoverMaterial: NSViewRepresentable {

@@ -43,10 +43,10 @@ struct YearOverviewView: View {
             }
             .padding(12)
             .background(CalendarSurface.chrome(blurEnabled: blurEnabled))
-            Divider().opacity(0.3)
             YearCalendarScrollView(model: model, firstWeekday: firstWeekday)
                 .background(CalendarSurface.content)
-            Divider().opacity(0.3)
+                .overlay(alignment: .top) { CalendarSurface.separator }
+                .overlay(alignment: .bottom) { CalendarSurface.separator }
             Text("滚动浏览年份")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity).padding(.vertical, 7)

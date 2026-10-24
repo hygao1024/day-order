@@ -285,7 +285,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             model.showingSettings = false
             defaults.set(true, forKey: "blurEnabled")
             try await saveSnapshot("blur-on-restored-dark", to: directory)
+            model.openYearOverview()
+            try await saveSnapshot("blur-on-year-dark", to: directory)
             defaults.set("light", forKey: "appearance")
+            try await saveSnapshot("blur-on-year-light", to: directory)
+            model.showingYearOverview = false
+            try await saveSnapshot("blur-on-restored-light", to: directory)
             popover.performClose(nil)
             guard !popover.isShown, keyboardMonitor == nil else { throw CocoaError(.coderInvalidValue) }
             try "真实状态栏弹窗、连续周滚动与跨月选择、滚动位置恢复、辅助功能动作、外观与节日快照、年概览导航、日期边界、关闭清理通过。\n"
