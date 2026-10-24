@@ -753,13 +753,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let top = table.rect(ofRow: firstRow).minY
             let bottom = table.rect(ofRow: lastRow).maxY
             guard model.calendarSnappedMonth == month, model.month == month,
-                  table.hiddenRowIndexes.contains(firstRow - 1),
+                  table.rect(ofRow: firstRow - 1).maxY <= table.visibleRect.minY + 1,
                   abs(table.visibleRect.minY - top) < 1,
                   abs(table.visibleRect.maxY - bottom) < 1 else {
                 fputs("整月吸附布局不完整：\(month)，visible=\(table.visibleRect)，rows=\(top)...\(bottom)，state=\(String(describing: model.calendarSnappedMonth))\n", stderr)
                 throw CocoaError(.coderInvalidValue)
             }
         }
+        var motionReports: [[String: Any]] = []
+        // 观察整个过渡，防止最终位置正确却在首帧改变行高、隐藏标题或重建周视图。
+        for (month, weekCount, offset) in [(2, 4, -22.0), (9, 5, 20.0), (8, 6, -22.0)] {
+            let date = model.engine.date(2026, month, 1)
+            try wheel(phase: 1)
+            position(date, offset: offset)
+            try await Task.sleep(for: .milliseconds(100))
+            let first = timeline.weekRow(containing: date)
+            let rows = Array((first - 1)..<(first + weekCount))
+            let heights = rows.map { table.rect(ofRow: $0).height }
+            let weekView = table.view(atColumn: 0, row: first, makeIfNecessary: false)
+            let startOffset = table.visibleRect.minY - table.rect(ofRow: first).minY
+            var previousOffset = startOffset
+            var samples: [[String: Double]] = []
+            let started = ProcessInfo.processInfo.systemUptime
+            try wheel(phase: 4)
+            while ProcessInfo.processInfo.systemUptime - started < 0.65 {
+                try await Task.sleep(for: .milliseconds(8))
+                for (row, height) in zip(rows, heights) {
+                    guard abs(table.rect(ofRow: row).height - height) < 0.01,
+                          !table.hiddenRowIndexes.contains(row) else {
+                        fputs("吸附过渡改变了行高或隐藏行：\(month)月，第\(row - first)行\n", stderr)
+                        throw CocoaError(.coderInvalidValue)
+                    }
+                }
+                guard table.view(atColumn: 0, row: first, makeIfNecessary: false) === weekView else {
+                    fputs("吸附过渡重建了可见周视图\n", stderr)
+                    throw CocoaError(.coderInvalidValue)
+                }
+                let current = table.visibleRect.minY - table.rect(ofRow: first).minY
+                guard abs(current) <= abs(previousOffset) + 0.6,
+                      current * startOffset >= -0.6 else {
+                    fputs("吸附过渡反向跳动或越过目标：\(previousOffset) → \(current)\n", stderr)
+                    throw CocoaError(.coderInvalidValue)
+                }
+                samples.append(["elapsedMS": (ProcessInfo.processInfo.systemUptime - started) * 1000,
+                                "offset": current])
+                previousOffset = current
+            }
+            try assertFullMonth(date)
+            if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                guard samples.filter({ abs($0["offset"]!) > 1 && abs($0["offset"]!) < Double(abs(startOffset)) - 1 }).count >= 3 else {
+                    fputs("吸附缺少连续的中间位置\n", stderr)
+                    throw CocoaError(.coderInvalidValue)
+                }
+            }
+            motionReports.append(["month": month, "weeks": weekCount, "rowHeights": heights, "samples": samples])
+            let beforeRelease = table.visibleRect.minY
+            try wheel(phase: 1)
+            guard abs(table.visibleRect.minY - beforeRelease) < 0.01,
+                  rows.map({ table.rect(ofRow: $0).height }) == heights else {
+                fputs("解除吸附改变了布局或滚动位置\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+            try wheel(phase: 4)
+        }
+        try JSONSerialization.data(withJSONObject: motionReports, options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("snap-motion.json"))
+        model.select(selection)
+        try await Task.sleep(for: .milliseconds(300))
         try assertFullMonth(model.month)
         try wheel(-3, phase: 1)
         position(model.engine.date(2026, 9, 1), offset: -22)

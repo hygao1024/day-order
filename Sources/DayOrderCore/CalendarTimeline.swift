@@ -48,6 +48,9 @@ public struct CalendarTimeline {
         self.monthRows = monthRows
     }
 
+    /// 使用行的 sectionMonth 查询完整周区间；非区块月初返回 nil。
+    public func weekRows(inMonth month: Date) -> Range<Int>? { monthRows[month] }
+
     /// 默认定位日期自身的月份区块；恢复位置时显式指定区块以区分重复的补位周。
     public func weekRow(containing date: Date, inMonth month: Date? = nil) -> Int {
         let section = engine.monthStart(engine.clamped(month ?? date))

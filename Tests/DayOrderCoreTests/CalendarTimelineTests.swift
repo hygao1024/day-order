@@ -14,6 +14,11 @@ import Testing
             switch row {
             case .month(let date): months.append(date)
             case .week(let start, let sectionMonth):
+                let weeks = timeline.weekRows(inMonth: sectionMonth)!
+                #expect(weeks.contains(index))
+                #expect((4...6).contains(weeks.count))
+                #expect(timeline.rows[weeks.lowerBound - 1].date == sectionMonth)
+                #expect(timeline.rows[weeks.upperBound - 1].sectionMonth == sectionMonth)
                 #expect(engine.calendar.component(.weekday, from: start) == firstWeekday)
                 for day in 0..<7 {
                     let date = engine.addingDays(day, to: start)
@@ -51,6 +56,8 @@ import Testing
         #expect(timeline.weekRow(containing: november, inMonth: october) == octoberEnd)
         #expect(timeline.weekRow(containing: engine.date(2026, 10, 31), inMonth: november) == novemberStart)
         let leapDay = engine.date(2028, 2, 29)
+        #expect(timeline.weekRows(inMonth: leapDay) == nil)
+        #expect(timeline.weekRows(inMonth: engine.date(1900, 1, 1)) == nil)
         #expect(timeline.rows[timeline.weekRow(containing: leapDay)].sectionMonth == engine.date(2028, 2, 1))
         #expect(timeline.rows[timeline.weekRow(containing: engine.date(2028, 3, 1))].sectionMonth == engine.date(2028, 3, 1))
         #expect(timeline.weekRow(containing: engine.date(1900, 1, 1)) == timeline.weekRow(containing: engine.date(1901, 1, 1)))
