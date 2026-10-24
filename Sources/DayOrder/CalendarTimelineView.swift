@@ -336,7 +336,7 @@ private final class CalendarDayButton: NSButton {
         let circle = NSRect(x: bounds.midX - 13, y: 3, width: 26, height: 26)
         if highlightedToday { Self.accent.setFill(); NSBezierPath(ovalIn: circle).fill() }
         let weekend = day.weekday == 1 || day.weekday == 7
-        drawText(String(day.day), rect: circle, font: .monospacedDigitSystemFont(ofSize: 16, weight: .regular),
+        drawText(String(day.day), rect: circle, font: .monospacedDigitSystemFont(ofSize: 16, weight: .semibold),
                  color: !isInMonth ? muted : today ? .white : weekend ? .secondaryLabelColor : .labelColor)
         let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         let color: NSColor = !isInMonth ? muted : annotation == nil ? .secondaryLabelColor : annotation?.kind == .solarTerm

@@ -79,7 +79,7 @@ struct CalendarView: View {
                 HStack(spacing: 2) {
                     ForEach(0..<7) { index in
                         Text(weekdays[(effectiveWeekday - 1 + index) % 7])
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity)
                     }
