@@ -428,7 +428,8 @@ final class CalendarWeekView: NSView {
     override func viewDidChangeEffectiveAppearance() { needsDisplay = true }
 }
 
-private final class CalendarDayButton: NSButton {
+private final class CalendarDayButton: NSButton, CalendarZoomParticipant {
+    var zoomHiddenDays: Set<Int> = []
     private var day: DayInfo?
     private var annotation: Annotation?
     private var holiday: HolidayDay?
@@ -492,11 +493,14 @@ private final class CalendarDayButton: NSButton {
                 path.stroke()
             }
         }
-        let circle = NSRect(x: bounds.midX - 13, y: 3, width: 26, height: 26)
-        if highlightedToday { Self.accent.setFill(); NSBezierPath(ovalIn: circle).fill() }
+        let circle = dayNumberFrame
+        let hideDate = zoomHiddenDays.contains(day.day)
+        if highlightedToday && !hideDate { Self.accent.setFill(); NSBezierPath(ovalIn: circle).fill() }
         let weekend = day.weekday == 1 || day.weekday == 7
-        drawText(String(day.day), rect: circle, font: .monospacedDigitSystemFont(ofSize: 16, weight: .semibold),
-                 color: !isInMonth ? muted : today ? .white : weekend ? .secondaryLabelColor : .labelColor)
+        if !hideDate {
+            drawText(String(day.day), rect: circle, font: .monospacedDigitSystemFont(ofSize: 16, weight: .semibold),
+                     color: !isInMonth ? muted : today ? .white : weekend ? .secondaryLabelColor : .labelColor)
+        }
         let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         let color: NSColor = !isInMonth ? muted : annotation == nil ? .secondaryLabelColor : annotation?.kind == .solarTerm
             ? (dark ? NSColor(srgbRed: 0.48, green: 0.74, blue: 0.55, alpha: 1)
@@ -511,6 +515,18 @@ private final class CalendarDayButton: NSButton {
                      color: !isInMonth ? muted : holiday.isOffDay ? Self.accent : .secondaryLabelColor)
         }
     }
+
+    func zoomGlyphs(month: Int, in root: NSView) -> [CalendarZoomGlyph] {
+        guard let day, day.year * 100 + day.month == month, isInMonth, isEnabled else { return [] }
+        let circle = dayNumberFrame
+        guard visibleRect.contains(circle) else { return [] }
+        let weekend = day.weekday == 1 || day.weekday == 7
+        return [CalendarZoomGlyph(day: day.day, frame: root.convert(circle, from: self),
+            font: .monospacedDigitSystemFont(ofSize: 16, weight: .semibold),
+            color: today ? .white : weekend ? .secondaryLabelColor : .labelColor, circle: today)]
+    }
+
+    private var dayNumberFrame: NSRect { NSRect(x: bounds.midX - 13, y: 3, width: 26, height: 26) }
 
     private func drawText(_ value: String, rect: NSRect, font: NSFont, color: NSColor) {
         let text = NSAttributedString(string: value, attributes: [.font: font, .foregroundColor: color])

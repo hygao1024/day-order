@@ -16,6 +16,7 @@ struct CalendarView: View {
     @AppStorage("menuBarDisplay") private var menuBarDisplay = MenuBarDisplay.iconAndDate.rawValue
     @AppStorage("menuBarDateFormat") private var menuBarDateFormat = MenuBarDateFormat.monthDayWeekday.rawValue
     let updateMenuBar: () -> Void
+    let updatePopoverAppearance: (NSAppearance?) -> Void
     let dismiss: () -> Void
 
     private let weekdays = ["日", "一", "二", "三", "四", "五", "六"]
@@ -25,8 +26,6 @@ struct CalendarView: View {
         VStack(spacing: 0) {
             if model.showingSettings {
                 settings.padding(12).background(CalendarSurface.settings)
-            } else if model.showingYearOverview {
-                YearOverviewView(model: model, firstWeekday: effectiveWeekday, blurEnabled: blurEnabled)
             } else {
                 calendar
             }
@@ -46,41 +45,54 @@ struct CalendarView: View {
     }
 
     private var calendar: some View {
+        CalendarShell(
+            header: AnyView(Group {
+                if model.showingYearOverview { YearOverviewHeader(model: model) }
+                else { monthHeader }
+            }),
+            content: AnyView(Group {
+                if model.showingYearOverview {
+                    YearCalendarScrollView(model: model, firstWeekday: effectiveWeekday)
+                } else {
+                    CalendarTimelineView(model: model, firstWeekday: effectiveWeekday, options: contentOptions)
+                }
+            }),
+            footer: AnyView(Group {
+                if model.showingYearOverview {
+                    Text("点击月份查看 · 滚动浏览年份")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity).padding(.vertical, 7)
+                } else { detail.padding(12) }
+            }),
+            yearOverview: model.showingYearOverview)
+    }
+
+    private var monthHeader: some View {
         let month = model.engine.info(for: model.month)
-        return VStack(spacing: 0) {
-            VStack(spacing: 12) {
-                HStack(spacing: 6) {
-                    Button { model.openYearOverview() } label: {
-                        Text("\(String(month.year))年\(month.month)月")
-                            .font(.system(size: 16, weight: .semibold))
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("浏览年份和月份")
-                    .accessibilityLabel("年概览，当前\(String(month.year))年\(month.month)月")
-                    Spacer(minLength: 0)
-                    monthNavigation
+        return VStack(spacing: 12) {
+            HStack(spacing: 6) {
+                Button { model.openYearOverview() } label: {
+                    Text("\(String(month.year))年\(month.month)月")
+                        .font(.system(size: 16, weight: .semibold))
+                        .contentShape(Rectangle())
                 }
-                HStack(spacing: 0) {
-                    ForEach(0..<7) { index in
-                        Text(weekdays[(effectiveWeekday - 1 + index) % 7])
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-                .accessibilityHidden(true)
+                .buttonStyle(.plain)
+                .help("浏览年份和月份")
+                .accessibilityLabel("年概览，当前\(String(month.year))年\(month.month)月")
+                Spacer(minLength: 0)
+                monthNavigation
             }
-            .padding(12)
-            CalendarTimelineView(model: model, firstWeekday: effectiveWeekday, options: contentOptions)
-                .frame(height: CalendarTimelineView.viewportHeight)
-                .background(CalendarSurface.content,
-                            in: RoundedRectangle(cornerRadius: CalendarTimelineView.cornerRadius, style: .continuous))
-                .clipShape(RoundedRectangle(cornerRadius: CalendarTimelineView.cornerRadius, style: .continuous))
-                .padding(.horizontal, CalendarTimelineView.cardInset)
-            detail.padding(12)
+            HStack(spacing: 0) {
+                ForEach(0..<7) { index in
+                    Text(weekdays[(effectiveWeekday - 1 + index) % 7])
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .accessibilityHidden(true)
         }
-        .background(CalendarSurface.chrome(blurEnabled: blurEnabled))
+        .padding(12)
     }
 
     private var monthNavigation: some View {
@@ -193,6 +205,7 @@ struct CalendarView: View {
     private func applyAppearance() {
         NSApp.appearance = appearance == "light" ? NSAppearance(named: .aqua)
             : appearance == "dark" ? NSAppearance(named: .darkAqua) : nil
+        updatePopoverAppearance(NSApp.appearance)
     }
 }
 

@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var refreshTimer: Timer?
     private var keyboardMonitor: Any?
     private var hostingController: NSHostingController<AnyView>?
+    private var presentationController: CalendarPresentationController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -22,7 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             #endif
             let model = CalendarModel(engine: try CalendarEngine(), holidayCacheDirectory: holidayCacheDirectory)
             self.model = model
-            let view = CalendarView(model: model, updateMenuBar: { [weak self] in self?.refresh() }) {
+            let view = CalendarView(model: model, updateMenuBar: { [weak self] in self?.refresh() },
+                                    updatePopoverAppearance: { [weak self] in self?.popover.appearance = $0 }) {
                 [weak self] in self?.popover.performClose(nil)
             }
             var root = AnyView(view)
@@ -38,10 +40,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 }
             }
             #endif
-            let host = NSHostingController(rootView: root)
-            host.sizingOptions = [.preferredContentSize]
+            let host = CalendarHostingController(rootView: root)
             hostingController = host
-            popover.contentViewController = host
+            let presentation = CalendarPresentationController(host: host, model: model, defaults: defaults)
+            presentationController = presentation
+            popover.contentViewController = presentation
             popover.behavior = .transient
             popover.animates = false
             popover.delegate = self
@@ -141,6 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func popoverDidClose(_ notification: Notification) {
+        presentationController?.cancelTransition()
         removeKeyboardMonitor()
     }
 
@@ -152,6 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        presentationController?.cancelTransition()
         model?.cancelHolidayUpdate()
         refreshTimer?.invalidate()
         removeKeyboardMonitor()
@@ -182,8 +187,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // showPopover 会刷新真实日期；快照随后固定时钟，使用同一生产视图。
             model.today = model.engine.date(2026, 10, 23)
             model.select(model.today)
+            if ProcessInfo.processInfo.arguments.contains("--calendar-zoom-smoke") {
+                try await verifyCalendarZoom(directory: directory)
+                try "月年过渡的常驻上下栏与背景、日期位移、容器尺寸、反向展开、取消和减少动态效果验证通过。\n"
+                    .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.arguments.contains("--scroll-benchmark") {
                 try await benchmarkOverviewScroll(directory: directory)
+                NSApp.terminate(nil)
+                return
+            }
+            if ProcessInfo.processInfo.arguments.contains("--year-overview-smoke") {
+                try await verifyYearOverview(directory: directory)
+                try "年概览滚动、年份跳转、月份选择、输入取消、边界与圆角外观快照验证通过。\n"
+                    .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
                 NSApp.terminate(nil)
                 return
             }
@@ -516,6 +535,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         model.jumpToMonth(1, year: 1901)
         model.openYearOverview()
         try await saveSnapshot("year-overview-lower-bound-dark", to: directory)
+        let today = model.today
+        let blurEnabled = defaults.bool(forKey: "blurEnabled")
+        model.today = model.engine.date(2026, 10, 24)
+        model.select(model.today)
+        model.openYearOverview()
+        defaults.set(1, forKey: "firstWeekday")
+        for blur in [false, true] {
+            defaults.set(blur, forKey: "blurEnabled")
+            for appearance in ["light", "dark"] {
+                defaults.set(appearance, forKey: "appearance")
+                try await saveSnapshot("year-rounded-\(blur ? "blur" : "solid")-\(appearance)", to: directory)
+            }
+        }
+        defaults.set(2, forKey: "firstWeekday")
+        defaults.set("light", forKey: "appearance")
+        model.select(model.engine.date(2026, 3, 24))
+        model.openYearOverview()
+        try await saveSnapshot("year-rounded-six-weeks", to: directory)
+        defaults.set(blurEnabled, forKey: "blurEnabled")
+        model.today = today
         model.select(original)
         defaults.set("light", forKey: "appearance")
     }
@@ -1044,7 +1083,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let row = (year - CalendarEngine.years.lowerBound) * 7 + 1 + (month - 1) / 2
         guard NSLocationInRange(row, table.rows(in: table.visibleRect)),
               table.view(atColumn: 0, row: row, makeIfNecessary: false) != nil else {
-            fputs("年概览定位失败：\(year)年\(month)月\n", stderr)
+            fputs("年概览定位失败：\(year)年\(month)月，概览状态=\(model?.showingYearOverview ?? false)，目标=\(model?.overviewTarget ?? 0)，表格=\(table.identifier?.rawValue ?? "nil")，过渡=\(presentationController?.isTransitioning ?? false)\n", stderr)
             throw CocoaError(.coderInvalidValue)
         }
     }
@@ -1308,9 +1347,213 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         model.select(model.today)
     }
 
+    private func verifyCalendarZoom(directory: URL) async throws {
+        guard let model, let presentation = presentationController else { throw CocoaError(.coderInvalidValue) }
+        let behavior = popover.behavior
+        popover.behavior = .applicationDefined
+        presentation.reduceMotionOverride = false
+        defer { popover.behavior = behavior; presentation.reduceMotionOverride = nil }
+        var report: [[String: Any]] = []
+        func sample(_ name: String, moving: Bool = true, matched: Bool = true) async throws {
+            var positions: [Double] = []
+            var heights: [Double] = []
+            var cardHeights: [Double] = []
+            var timing: [[String: Double]] = []
+            guard let shell = presentation.shell else { throw CocoaError(.coderInvalidValue) }
+            let material = presentation.material
+            var chrome: [[String: Double]] = []
+            func checkChrome() throws {
+                func visible(_ view: NSView) -> Bool {
+                    var current: NSView? = view
+                    while let node = current {
+                        if node.isHidden || node.alphaValue < 0.999 { return false }
+                        current = node.superview
+                    }
+                    return view.window != nil
+                }
+                let blur = defaults.object(forKey: "blurEnabled") as? Bool ?? true
+                guard presentation.shell === shell, presentation.material === material,
+                      visible(shell.header), visible(shell.footer),
+                      material.superview === presentation.view, material.isHidden == !blur,
+                      material.frame == presentation.view.bounds,
+                      !blur || visible(material) else {
+                    fputs("月年切换重建或隐藏了常驻上下栏／背景：\(name)\n", stderr)
+                    throw CocoaError(.coderInvalidValue)
+                }
+                if presentation.isTransitioning, presentation.progress > 0,
+                   let card = presentation.movingCardFrame {
+                    let footerFrame = presentation.view.convert(shell.footer.bounds, from: shell.footer)
+                    guard abs(footerFrame.minY - card.maxY) < 1,
+                          shell.header.visibleRect.height > 20, shell.footer.visibleRect.height > 10 else {
+                        fputs("月年过渡上下栏被裁空或底栏脱离卡片：\(name)\n", stderr)
+                        throw CocoaError(.coderInvalidValue)
+                    }
+                }
+                chrome.append(["progress": presentation.progress,
+                               "headerAlpha": shell.header.alphaValue,
+                               "footerAlpha": shell.footer.alphaValue,
+                               "hostAlpha": presentation.host.view.alphaValue])
+            }
+            try checkChrome()
+            var savedMiddle = false
+            let began = ProcessInfo.processInfo.systemUptime
+            while ProcessInfo.processInfo.systemUptime - began < 0.42 {
+                try await Task.sleep(for: .milliseconds(16))
+                try checkChrome()
+                if presentation.isTransitioning, let card = presentation.movingCardFrame, presentation.progress > 0 {
+                    if let frame = presentation.movingDayFrame { positions.append(frame.midX + frame.midY) }
+                    heights.append(popover.contentSize.height)
+                    cardHeights.append(card.height)
+                    timing.append(["time": presentation.elapsedFraction, "progress": presentation.progress])
+                    if !savedMiddle, presentation.progress > 0.35 {
+                        try saveViewSnapshot(presentation.view, name: name + "-middle", to: directory)
+                        savedMiddle = true
+                    }
+                    guard (presentation.matchedDayCount > 0) == matched else { throw CocoaError(.coderInvalidValue) }
+                }
+            }
+            guard cardHeights.count >= 3, (!matched || positions.count >= 3), savedMiddle, !presentation.isTransitioning,
+                  presentation.transitionView == nil, hostingController?.view.alphaValue == 1 else {
+                fputs("月年过渡没有连续中间帧或未清理：\(name)，采样=\(positions.count)，进度=\(presentation.progress)，活动=\(presentation.isTransitioning)，中间帧=\(savedMiddle)，透明度=\(hostingController?.view.alphaValue ?? -1)，尺寸=\(popover.contentSize)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+            if moving {
+                guard timing.contains(where: { sample in
+                    let time = sample["time"] ?? 1
+                    return time >= 0.15 && time <= 0.5 && (sample["progress"] ?? 0) > time + 0.15
+                }) else {
+                    fputs("月年过渡没有快速起步的缓出阶段：\(name)\n", stderr)
+                    throw CocoaError(.coderInvalidValue)
+                }
+                guard let low = positions.min(), let high = positions.max(), high - low > 5 else {
+                    fputs("月年过渡的日期没有移动：\(name)\n", stderr)
+                    throw CocoaError(.coderInvalidValue)
+                }
+                guard let low = cardHeights.min(), let high = cardHeights.max(), high - low > 20,
+                      Set(cardHeights.map { Int($0 * 2) }).count >= 3 else {
+                    fputs("白色容器没有连续改变尺寸：\(name)\n", stderr)
+                    throw CocoaError(.coderInvalidValue)
+                }
+            } else {
+                guard positions.allSatisfy({ abs($0 - (positions.first ?? $0)) < 0.5 }),
+                      cardHeights.allSatisfy({ abs($0 - cardHeights[0]) < 0.5 }) else {
+                    fputs("短淡化模式仍发生日期或容器缩放：\(name)\n", stderr)
+                    throw CocoaError(.coderInvalidValue)
+                }
+            }
+            guard shell.content.alphaValue == 1, shell.transitionCard == nil else {
+                fputs("月年切换后正文或底栏位置未恢复：\(name)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+            report.append(["name": name, "positions": positions, "heights": heights,
+                           "cardHeights": cardHeights, "timing": timing, "chrome": chrome])
+            try saveViewSnapshot(presentation.view, name: name + "-end", to: directory)
+        }
+        for (year, month, day, weekday) in [(2026, 10, 24, 1), (2026, 3, 24, 2),
+                                           (1901, 1, 1, 1), (2100, 12, 31, 2)] {
+            defaults.set(weekday, forKey: "firstWeekday")
+            model.select(model.engine.date(year, month, day))
+            try await Task.sleep(for: .milliseconds(450))
+            guard let host = hostingController,
+                  abs(popover.contentSize.height - host.view.fittingSize.height) < 1 else {
+                fputs("弹窗没有跟随月份详情的实际尺寸：\(popover.contentSize)，预期=\(hostingController?.view.fittingSize ?? .zero)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+            try saveViewSnapshot(presentation.view, name: "zoom-\(year)-\(month)-start", to: directory)
+            let selection = model.selection
+            model.openYearOverview()
+            try await sample("zoom-\(year)-\(month)-out")
+            guard model.selection == selection, model.showingYearOverview else { throw CocoaError(.coderInvalidValue) }
+            let table = try overviewTable()
+            let row = (year - CalendarEngine.years.lowerBound) * 7 + 1 + (month - 1) / 2
+            guard let pair = table.view(atColumn: 0, row: row, makeIfNecessary: false),
+                  let button = pair.subviews.compactMap({ $0 as? NSButton }).first(where: { $0.title == "\(year)年\(month)月" }),
+                  button.accessibilityPerformPress() else { throw CocoaError(.coderInvalidValue) }
+            try await sample("zoom-\(year)-\(month)-in")
+            guard model.selection == selection, !model.showingYearOverview else { throw CocoaError(.coderInvalidValue) }
+        }
+        model.select(model.engine.date(2026, 10, 24))
+        try await Task.sleep(for: .milliseconds(400))
+        let selection = model.selection
+        // 跨月自由停留仅让可见的当前月份日期参与，不改动原滚动位置。
+        let table = try calendarTimelineTable()
+        guard let scroll = table.enclosingScrollView else { throw CocoaError(.coderInvalidValue) }
+        (scroll as? CalendarTimelineScrollView)?.onActivity?()
+        let position = scroll.contentView.bounds.minY + 130
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: position))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        try await Task.sleep(for: .milliseconds(200))
+        guard let viewport = model.calendarViewport else { throw CocoaError(.coderInvalidValue) }
+        model.openYearOverview()
+        try await sample("zoom-partial-month")
+        model.dismissYearLevel()
+        try await sample("zoom-return-position")
+        let restored = try calendarTimelineTable()
+        let timeline = CalendarTimeline(engine: model.engine, firstWeekday: defaults.integer(forKey: "firstWeekday"))
+        let restoredRow = timeline.weekRow(containing: viewport.date, inMonth: viewport.month)
+        guard abs(restored.visibleRect.minY - restored.rect(ofRow: restoredRow).minY - viewport.offset) < 1,
+              model.selection == selection else {
+            fputs("月年过渡未恢复原可见周及其偏移\n", stderr)
+            throw CocoaError(.coderInvalidValue)
+        }
+        for interruption in ["reverse", "settings", "close"] {
+            model.openYearOverview()
+            try await Task.sleep(for: .milliseconds(60))
+            switch interruption {
+            case "reverse":
+                guard let window = hostingController?.view.window,
+                      let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                          context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
+                          isARepeat: false, keyCode: 53) else { throw CocoaError(.coderInvalidValue) }
+                NSApp.postEvent(escape, atStart: false)
+            case "settings": model.showingSettings = true
+            default: popover.performClose(nil)
+            }
+            try await Task.sleep(for: .milliseconds(400))
+            guard !presentation.isTransitioning, presentation.transitionView == nil,
+                  hostingController?.view.alphaValue == 1, model.selection == selection,
+                  interruption != "reverse" || !model.showingYearOverview else {
+                fputs("月年过渡中断后残留遮罩或覆盖选择：\(interruption)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+            if interruption == "close" { showPopover() }
+            model.showingSettings = false
+            model.select(selection)
+            try await Task.sleep(for: .milliseconds(400))
+        }
+        presentation.reduceMotionOverride = true
+        model.openYearOverview()
+        try await sample("zoom-reduced-motion", moving: false)
+        presentation.reduceMotionOverride = false
+        model.yearDraft = "2048"
+        model.jumpToOverviewYear()
+        try await Task.sleep(for: .milliseconds(400))
+        model.dismissYearLevel()
+        try await sample("zoom-offscreen-month", moving: false, matched: false)
+        for appearance in ["light", "dark"] {
+            for blur in [false, true] {
+                defaults.set(appearance, forKey: "appearance")
+                defaults.set(blur, forKey: "blurEnabled")
+                try await Task.sleep(for: .milliseconds(300))
+                guard hostingController?.view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
+                        == (appearance == "dark" ? .darkAqua : .aqua) else {
+                    fputs("动画外观未跟随偏好：\(appearance)，应用=\(String(describing: NSApp.appearance))，窗口=\(String(describing: hostingController?.view.window?.appearance))，视图=\(String(describing: hostingController?.view.appearance))\n", stderr)
+                    throw CocoaError(.coderInvalidValue)
+                }
+                model.openYearOverview()
+                try await sample("zoom-\(appearance)-\(blur ? "blur" : "solid")-out")
+                model.dismissYearLevel()
+                try await sample("zoom-\(appearance)-\(blur ? "blur" : "solid")-in")
+            }
+        }
+        try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("zoom-motion.json"))
+    }
+
     private func saveSnapshot(_ name: String, to directory: URL) async throws {
         try await Task.sleep(for: .milliseconds(400))
-        guard let view = hostingController?.view else { throw CocoaError(.coderInvalidValue) }
+        guard let view = presentationController?.view else { throw CocoaError(.coderInvalidValue) }
         try saveViewSnapshot(view, name: name, to: directory)
     }
 

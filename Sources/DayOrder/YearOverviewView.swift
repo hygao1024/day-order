@@ -2,63 +2,72 @@ import AppKit
 import DayOrderCore
 import SwiftUI
 
-struct YearOverviewView: View {
+struct YearOverviewHeader: View {
     @ObservedObject var model: CalendarModel
-    let firstWeekday: Int
-    let blurEnabled: Bool
     @FocusState private var yearFocused: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 8) {
+        VStack(spacing: 8) {
+            ZStack {
+                Text("年概览").font(.system(size: 13, weight: .semibold))
                 HStack {
                     Button { model.showingYearOverview = false } label: {
                         Label("返回", systemImage: "chevron.left")
+                            .frame(height: 24)
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .help("返回月视图")
                     Spacer()
-                    Text("年概览").font(.system(size: 13, weight: .semibold))
-                    Spacer()
-                    Button("今天") { model.goToToday() }
+                    Button { model.goToToday() } label: {
+                        Text("今天").frame(width: 34, height: 20)
+                    }
+                    .buttonStyle(YearOverviewTodayButtonStyle())
+                    .help("返回月视图并选中今天")
                 }
-                .buttonStyle(.bordered).controlSize(.small)
-                if model.showingYearEntry {
-                    HStack(spacing: 6) {
-                        TextField("年份", text: $model.yearDraft)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 76)
-                            .focused($yearFocused)
-                            .onSubmit { model.jumpToOverviewYear() }
-                            .accessibilityLabel("年份，1901 至 2100")
-                        Button("跳转") { model.jumpToOverviewYear() }
-                            .disabled(model.validYearDraft == nil)
-                        Spacer()
-                        Button("取消") { model.showingYearEntry = false }
-                    }
-                    .controlSize(.small)
-                    if model.validYearDraft == nil {
-                        Text("请输入 1901–2100 之间的年份")
-                            .font(.system(size: 11)).foregroundStyle(.red)
-                    }
+                .font(.system(size: 13))
+            }
+            if model.showingYearEntry {
+                HStack(spacing: 6) {
+                    TextField("年份", text: $model.yearDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 76)
+                        .focused($yearFocused)
+                        .onSubmit { model.jumpToOverviewYear() }
+                        .accessibilityLabel("年份，1901 至 2100")
+                    Button("跳转") { model.jumpToOverviewYear() }
+                        .disabled(model.validYearDraft == nil)
+                    Spacer()
+                    Button("取消") { model.showingYearEntry = false }
+                }
+                .controlSize(.small)
+                if model.validYearDraft == nil {
+                    Text("请输入 1901–2100 之间的年份")
+                        .font(.system(size: 11)).foregroundStyle(.red)
                 }
             }
-            .padding(12)
-            .background(CalendarSurface.chrome(blurEnabled: blurEnabled))
-            YearCalendarScrollView(model: model, firstWeekday: firstWeekday)
-                .background(CalendarSurface.content)
-                .overlay(alignment: .top) { CalendarSurface.separator }
-                .overlay(alignment: .bottom) { CalendarSurface.separator }
-            Text("滚动浏览年份")
-                .font(.system(size: 10)).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity).padding(.vertical, 7)
-                .background(CalendarSurface.chrome(blurEnabled: blurEnabled))
         }
-        .frame(height: 430)
+        .padding(12)
         .onChange(of: model.showingYearEntry) { yearFocused = model.showingYearEntry }
     }
 
 }
 
-private struct YearCalendarScrollView: NSViewRepresentable {
+private struct YearOverviewTodayButtonStyle: ButtonStyle {
+    @State private var hovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .contentShape(Capsule())
+            .background(Color.primary.opacity(configuration.isPressed ? 0.12 : hovered ? 0.08 : 0.05), in: Capsule())
+            .overlay { Capsule().strokeBorder(.primary.opacity(0.08), lineWidth: 0.5).allowsHitTesting(false) }
+            .onHover { hovered = $0 }
+    }
+}
+
+struct YearCalendarScrollView: NSViewRepresentable {
     @ObservedObject var model: CalendarModel
     let firstWeekday: Int
 
@@ -68,7 +77,12 @@ private struct YearCalendarScrollView: NSViewRepresentable {
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
         scroll.drawsBackground = false
+        scroll.wantsLayer = true
+        scroll.layer?.cornerRadius = YearCalendarLayout.cornerRadius
+        scroll.layer?.cornerCurve = .continuous
+        scroll.layer?.masksToBounds = true
         let table = NSTableView()
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("months"))
         column.resizingMask = .autoresizingMask
@@ -129,7 +143,7 @@ private struct YearCalendarScrollView: NSViewRepresentable {
 
         func numberOfRows(in tableView: NSTableView) -> Int { CalendarEngine.years.count * 7 }
         func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-            row % 7 == 0 ? Self.headerHeight : 136
+            row % 7 == 0 ? Self.headerHeight : 128
         }
         func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool { row % 7 == 0 }
         func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }

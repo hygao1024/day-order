@@ -1,5 +1,12 @@
 import AppKit
 
+enum YearCalendarLayout {
+    static let cornerRadius: CGFloat = 12
+    static let cardInset: CGFloat = 6
+    // 与外边距合计 12 pt，保留两列小月历的原有宽度。
+    static let contentInset: CGFloat = 6
+}
+
 struct MiniMonthLayout {
     let year: Int
     let month: Int
@@ -28,14 +35,17 @@ final class MonthPairView: NSView {
 
     override func layout() {
         super.layout()
-        let width = max(0, (bounds.width - 40) / 2)
-        left.frame = NSRect(x: 12, y: 4, width: width, height: 122)
-        right.frame = NSRect(x: 28 + width, y: 4, width: width, height: 122)
+        let inset = YearCalendarLayout.contentInset
+        let gap: CGFloat = 16
+        let width = max(0, (bounds.width - 2 * inset - gap) / 2)
+        left.frame = NSRect(x: inset, y: 4, width: width, height: 122)
+        right.frame = NSRect(x: inset + width + gap, y: 4, width: width, height: 122)
     }
 }
 
 // 保留 NSButton 的点击、键盘与辅助功能语义；日期栅格只绘制，不创建逐日子视图。
-private final class MiniMonthButton: NSButton {
+private final class MiniMonthButton: NSButton, CalendarZoomParticipant {
+    var zoomHiddenDays: Set<Int> = []
     private var monthLayout: MiniMonthLayout?
     private var firstWeekday = 2
     private var todayDay: Int?
@@ -102,11 +112,9 @@ private final class MiniMonthButton: NSButton {
             Self.weekdays[(firstWeekday - 1 + column) % 7]
                 .draw(centeredIn: NSRect(x: CGFloat(column) * columnWidth, y: 22, width: columnWidth, height: 10))
         }
-        let offset = (month.startingWeekday - firstWeekday + 7) % 7
         for day in 1...month.dayCount {
-            let index = offset + day - 1
-            let rect = NSRect(x: CGFloat(index % 7) * columnWidth, y: 37 + CGFloat(index / 7) * 14,
-                              width: columnWidth, height: 14)
+            if zoomHiddenDays.contains(day) { continue }
+            let rect = dateFrame(day, in: month)
             if todayDay == day {
                 Self.accent.setFill()
                 NSBezierPath(ovalIn: NSRect(x: rect.midX - 7, y: rect.minY, width: 14, height: 14)).fill()
@@ -115,6 +123,27 @@ private final class MiniMonthButton: NSButton {
                 Self.days[day - 1].draw(centeredIn: rect)
             }
         }
+    }
+
+    func zoomGlyphs(month: Int, in root: NSView) -> [CalendarZoomGlyph] {
+        guard let layout = monthLayout, layout.year * 100 + layout.month == month,
+              visibleRect.height > 30 else { return [] }
+        var result: [CalendarZoomGlyph] = []
+        for day in 1...layout.dayCount {
+            let rect = dateFrame(day, in: layout)
+            if visibleRect.contains(rect) {
+                result.append(CalendarZoomGlyph(day: day, frame: root.convert(rect, from: self),
+                    font: .monospacedDigitSystemFont(ofSize: 9, weight: .regular),
+                    color: todayDay == day ? .white : .labelColor, circle: todayDay == day))
+            }
+        }
+        return result
+    }
+
+    private func dateFrame(_ day: Int, in month: MiniMonthLayout) -> NSRect {
+        let index = (month.startingWeekday - firstWeekday + 7) % 7 + day - 1
+        let width = bounds.width / 7
+        return NSRect(x: CGFloat(index % 7) * width, y: 37 + CGFloat(index / 7) * 14, width: width, height: 14)
     }
 
     override func updateTrackingAreas() {
@@ -176,7 +205,7 @@ final class YearHeaderView: NSView {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        label.font = .systemFont(ofSize: 18, weight: .semibold)
+        label.font = .systemFont(ofSize: 20, weight: .semibold)
         label.textColor = .labelColor
         addSubview(label)
         edit.isBordered = false
@@ -204,7 +233,7 @@ final class YearHeaderView: NSView {
     override func layout() {
         super.layout()
         label.sizeToFit()
-        label.frame.origin = NSPoint(x: 10, y: (bounds.height - label.frame.height) / 2)
+        label.frame.origin = NSPoint(x: YearCalendarLayout.contentInset, y: (bounds.height - label.frame.height) / 2)
         edit.frame = NSRect(x: label.frame.maxX + 2, y: (bounds.height - 24) / 2, width: 24, height: 24)
     }
 
@@ -212,7 +241,8 @@ final class YearHeaderView: NSView {
         CalendarSurface.contentColor.setFill()
         bounds.fill()
         NSColor.separatorColor.withAlphaComponent(0.25).setFill()
-        NSRect(x: 12, y: 0, width: max(0, bounds.width - 24), height: 0.5).fill()
+        let inset = YearCalendarLayout.contentInset
+        NSRect(x: inset, y: 0, width: max(0, bounds.width - 2 * inset), height: 0.5).fill()
     }
 
     override func viewDidChangeEffectiveAppearance() { needsDisplay = true }
