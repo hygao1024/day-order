@@ -482,7 +482,7 @@ private final class CalendarDayButton: NSButton, CalendarZoomParticipant {
     override func draw(_ dirtyRect: NSRect) {
         guard let day, isEnabled else { return }
         let highlightedToday = today && isInMonth
-        let muted = NSColor.labelColor.withAlphaComponent(0.30)
+        let muted = NSColor.labelColor.withAlphaComponent(0.18)
         if (selected && !highlightedToday) || isHighlighted {
             NSColor.labelColor.withAlphaComponent(isHighlighted ? 0.09 : 0.06).setFill()
             let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
