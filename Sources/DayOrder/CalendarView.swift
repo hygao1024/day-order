@@ -59,23 +59,8 @@ struct CalendarView: View {
                     .help("浏览年份和月份")
                     .accessibilityLabel("年概览，当前\(String(month.year))年\(month.month)月")
                     Spacer(minLength: 0)
-                    Button { model.moveMonth(-1) } label: {
-                        Image(systemName: "chevron.left").frame(width: 12, height: 18)
-                    }
-                    .disabled(!model.canMoveMonth(-1))
-                    .help("上个月（Page Up）")
-                    .accessibilityLabel("上个月")
-                    Button { model.goToToday() } label: { Text("今天").frame(height: 18) }
-                        .help("回到今天（Home）")
-                    Button { model.moveMonth(1) } label: {
-                        Image(systemName: "chevron.right").frame(width: 12, height: 18)
-                    }
-                    .disabled(!model.canMoveMonth(1))
-                    .help("下个月（Page Down）")
-                    .accessibilityLabel("下个月")
+                    monthNavigation
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
                 HStack(spacing: 2) {
                     ForEach(0..<7) { index in
                         Text(weekdays[(effectiveWeekday - 1 + index) % 7])
@@ -95,6 +80,42 @@ struct CalendarView: View {
                 .overlay(alignment: .bottom) { CalendarSurface.separator }
             detail.padding(12).background(CalendarSurface.chrome(blurEnabled: blurEnabled))
         }
+    }
+
+    private var monthNavigation: some View {
+        HStack(spacing: 0) {
+            Button { model.moveMonth(-1) } label: {
+                Image(systemName: "chevron.left").frame(width: 28, height: 24)
+            }
+            .disabled(!model.canMoveMonth(-1))
+            .help("上个月（Page Up）")
+            .accessibilityLabel("上个月")
+            navigationDivider
+            Button { model.goToToday() } label: {
+                Text("今天").frame(width: 44, height: 24)
+            }
+            .help("回到今天（Home）")
+            navigationDivider
+            Button { model.moveMonth(1) } label: {
+                Image(systemName: "chevron.right").frame(width: 28, height: 24)
+            }
+            .disabled(!model.canMoveMonth(1))
+            .help("下个月（Page Down）")
+            .accessibilityLabel("下个月")
+        }
+        .font(.system(size: 12, weight: .medium))
+        .buttonStyle(CalendarNavigationButtonStyle())
+        .background(.primary.opacity(0.045), in: Capsule())
+        .clipShape(Capsule())
+        .overlay { Capsule().strokeBorder(.primary.opacity(0.10), lineWidth: 0.5).allowsHitTesting(false) }
+    }
+
+    private var navigationDivider: some View {
+        Rectangle()
+            .fill(.primary.opacity(0.14))
+            .frame(width: 0.5, height: 12)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     private var detail: some View {
@@ -171,5 +192,18 @@ struct CalendarView: View {
     private func applyAppearance() {
         NSApp.appearance = appearance == "light" ? NSAppearance(named: .aqua)
             : appearance == "dark" ? NSAppearance(named: .darkAqua) : nil
+    }
+}
+
+private struct CalendarNavigationButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(isEnabled ? Color.primary : Color.secondary.opacity(0.45))
+            .contentShape(Rectangle())
+            .background(Color.primary.opacity(isEnabled ? (configuration.isPressed ? 0.12 : isHovered ? 0.06 : 0) : 0))
+            .onHover { isHovered = $0 }
     }
 }

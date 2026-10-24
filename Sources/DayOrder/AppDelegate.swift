@@ -195,6 +195,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 return
             }
             try await saveSnapshot("light-october", to: directory)
+            model.today = model.engine.date(2026, 10, 24)
+            model.select(model.today)
+            try await verifyMonthNavigation(directory: directory)
+            model.today = model.engine.date(2026, 10, 23)
+            model.select(model.today)
             for appearance in ["light", "dark"] {
                 defaults.set(appearance, forKey: "appearance")
                 defaults.set(2, forKey: "firstWeekday")
@@ -1070,6 +1075,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let end = max(0, document.bounds.height - scroll.contentView.bounds.height)
         scroll.contentView.scroll(to: NSPoint(x: 0, y: toBottom == document.isFlipped ? end : 0))
         scroll.reflectScrolledClipView(scroll.contentView)
+    }
+
+    private func verifyMonthNavigation(directory: URL) async throws {
+        try await saveSnapshot("navigation-october-light", to: directory)
+        guard let model, let view = hostingController?.view, let window = view.window else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        func button(_ label: String) throws -> AnyObject {
+            func find(in element: AnyObject) -> AnyObject? {
+                if element.accessibilityRole?() == .button, element.accessibilityLabel?() == label { return element }
+                for child in element.accessibilityChildren?() ?? [] {
+                    if let found = find(in: child as AnyObject) { return found }
+                }
+                return nil
+            }
+            guard let found = find(in: view) else {
+                fputs("月份导航按钮不可访问：\(label)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+            return found
+        }
+        func click(_ label: String) async throws {
+            guard let frame = try button(label).accessibilityFrame?(), !frame.isEmpty else {
+                throw CocoaError(.coderInvalidValue)
+            }
+            let point = window.convertPoint(fromScreen: NSPoint(x: frame.midX, y: frame.midY))
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                guard let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                    context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else {
+                    throw CocoaError(.coderInvalidValue)
+                }
+                NSApp.postEvent(event, atStart: false)
+            }
+            try await Task.sleep(for: .milliseconds(400))
+        }
+        let behavior = popover.behavior
+        popover.behavior = .applicationDefined
+        defer { popover.behavior = behavior }
+        try await click("上个月")
+        guard model.selection == model.engine.date(2026, 9, 24) else {
+            fputs("上个月按钮未定位到九月。\n", stderr)
+            throw CocoaError(.coderInvalidValue)
+        }
+        try await click("下个月")
+        guard model.selection == model.today else { throw CocoaError(.coderInvalidValue) }
+        model.select(model.engine.date(2026, 12, 31))
+        defaults.set("dark", forKey: "appearance")
+        try await saveSnapshot("navigation-december-dark", to: directory)
+        try await click("今天")
+        guard model.selection == model.today, model.month == model.engine.monthStart(model.today) else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        for (date, label, name) in [
+            (model.engine.date(1901, 1, 1), "上个月", "lower"),
+            (model.engine.date(2100, 12, 31), "下个月", "upper")
+        ] {
+            model.select(date)
+            try await saveSnapshot("navigation-\(name)-disabled", to: directory)
+            guard try button(label).isAccessibilityEnabled?() == false else { throw CocoaError(.coderInvalidValue) }
+            try await click(label)
+            guard model.selection == date else { throw CocoaError(.coderInvalidValue) }
+        }
+        defaults.set("light", forKey: "appearance")
+        model.select(model.today)
     }
 
     private func saveSnapshot(_ name: String, to directory: URL) async throws {
