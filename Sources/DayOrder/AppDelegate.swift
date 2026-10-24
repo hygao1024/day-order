@@ -169,6 +169,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func runSmokeTest(directory: URL, defaults: UserDefaults, domain: String) async {
         defer { defaults.removePersistentDomain(forName: domain) }
+        // 快照主动设置日期；定时刷新不能在较长回归中覆盖测试时钟。
+        refreshTimer?.invalidate()
+        refreshTimer = nil
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             guard let model else { throw CocoaError(.coderInvalidValue) }
@@ -181,6 +184,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             model.select(model.today)
             if ProcessInfo.processInfo.arguments.contains("--scroll-benchmark") {
                 try await benchmarkOverviewScroll(directory: directory)
+                NSApp.terminate(nil)
+                return
+            }
+            if ProcessInfo.processInfo.arguments.contains("--month-snap-smoke") {
+                try await verifyMonthSnapping(directory: directory)
+                try "月初吸附、惯性等待、中途取消、四至六周完整显示、返回恢复与边界验证通过。\n"
+                    .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
                 NSApp.terminate(nil)
                 return
             }
@@ -578,6 +588,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         try await Task.sleep(for: .milliseconds(400))
         let table = try calendarTimelineTable()
         guard let scroll = table.enclosingScrollView else { throw CocoaError(.coderInvalidValue) }
+        // 以下直接移动视口验证自由浏览，先执行与滚轮开始相同的释放动作。
+        (scroll as? CalendarTimelineScrollView)?.onActivity?()
         let timeline = CalendarTimeline(engine: model.engine, firstWeekday: 1)
         let firstRow = timeline.weekRow(containing: model.engine.date(2026, 10, 1))
         guard let firstWeek = table.view(atColumn: 0, row: firstRow, makeIfNecessary: false),
@@ -610,6 +622,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             throw CocoaError(.coderInvalidValue)
         }
         try assertCalendarAccent(solarTerm, expected: true)
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        try await Task.sleep(for: .milliseconds(100))
         let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
         for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
             guard let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
@@ -700,6 +715,141 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard model.selection == model.today, model.month == model.engine.monthStart(model.today) else {
             throw CocoaError(.coderInvalidValue)
         }
+    }
+
+    private func verifyMonthSnapping(directory: URL) async throws {
+        guard let model else { throw CocoaError(.coderInvalidValue) }
+        let behavior = popover.behavior
+        popover.behavior = .applicationDefined
+        defer { popover.behavior = behavior }
+        defaults.set(1, forKey: "firstWeekday")
+        model.select(model.engine.date(2026, 10, 24))
+        try await Task.sleep(for: .milliseconds(400))
+        let table = try calendarTimelineTable()
+        guard let scroll = table.enclosingScrollView as? CalendarTimelineScrollView else { throw CocoaError(.coderInvalidValue) }
+        let timeline = CalendarTimeline(engine: model.engine, firstWeekday: 1)
+        let selection = model.selection
+        func wheel(_ delta: Int32 = 0, phase: Int64 = 0, momentum: Int64 = 0) throws {
+            guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+                                   wheel1: delta, wheel2: 0, wheel3: 0) else { throw CocoaError(.coderInvalidValue) }
+            cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
+            cg.setIntegerValueField(.scrollWheelEventMomentumPhase, value: momentum)
+            guard let event = NSEvent(cgEvent: cg) else { throw CocoaError(.coderInvalidValue) }
+            scroll.scrollWheel(with: event)
+        }
+        func position(_ date: Date, offset: CGFloat) {
+            let row = timeline.weekRow(containing: date)
+            let point = table.convert(NSPoint(x: 0, y: table.rect(ofRow: row).minY + offset), to: scroll.contentView)
+            scroll.contentView.scroll(to: point)
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+        func assertFullMonth(_ date: Date, weekdays: Int = 1, in target: NSTableView? = nil) throws {
+            let table = target ?? table
+            let layout = CalendarTimeline(engine: model.engine, firstWeekday: weekdays)
+            let month = model.engine.monthStart(date)
+            let last = model.engine.addingDays(-1, to: model.engine.addingMonths(1, to: month))
+            let firstRow = layout.weekRow(containing: month)
+            let lastRow = layout.weekRow(containing: last)
+            let top = table.rect(ofRow: firstRow).minY
+            let bottom = table.rect(ofRow: lastRow).maxY
+            guard model.calendarSnappedMonth == month, model.month == month,
+                  table.hiddenRowIndexes.contains(firstRow - 1),
+                  abs(table.visibleRect.minY - top) < 1,
+                  abs(table.visibleRect.maxY - bottom) < 1 else {
+                fputs("整月吸附布局不完整：\(month)，visible=\(table.visibleRect)，rows=\(top)...\(bottom)，state=\(String(describing: model.calendarSnappedMonth))\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+        }
+        try assertFullMonth(model.month)
+        try wheel(-3, phase: 1)
+        position(model.engine.date(2026, 9, 1), offset: -22)
+        try await Task.sleep(for: .milliseconds(450))
+        guard scroll.gestureActive, model.calendarSnappedMonth == nil else { throw CocoaError(.coderInvalidValue) }
+        try wheel(phase: 4)
+        try wheel(-1, momentum: 1)
+        try await Task.sleep(for: .milliseconds(450))
+        guard scroll.gestureActive, model.calendarSnappedMonth == nil else { throw CocoaError(.coderInvalidValue) }
+        try wheel(momentum: 3)
+        try await Task.sleep(for: .milliseconds(500))
+        try assertFullMonth(model.engine.date(2026, 9, 1))
+        guard model.selection == selection else { throw CocoaError(.coderInvalidValue) }
+        try await saveSnapshot("snap-september-five-weeks", to: directory)
+
+        // 再次滚动立即释放整月布局；停在月中不应被拉回月初。
+        try wheel(-4)
+        // AppKit 会在后续运行循环应用滚轮位移，待其落定后设置测试锚点。
+        try await Task.sleep(for: .milliseconds(100))
+        position(model.engine.date(2026, 9, 13), offset: 17)
+        try await Task.sleep(for: .milliseconds(500))
+        guard model.calendarSnappedMonth == nil else { fputs("月中触发了吸附\n", stderr); throw CocoaError(.coderInvalidValue) }
+        let midOffset = table.visibleRect.minY - table.rect(ofRow: timeline.weekRow(containing: model.engine.date(2026, 9, 13))).minY
+        guard abs(midOffset - 17) < 1 else { fputs("月中偏移错误：\(midOffset)\n", stderr); throw CocoaError(.coderInvalidValue) }
+
+        // 动画开始后重新触摸，旧任务不得继续写滚动位置。
+        try wheel()
+        position(model.engine.date(2026, 8, 1), offset: 20)
+        // 原生滚轮的 live-scroll 结束通知可能晚于事件返回，按实际动画状态等待。
+        for _ in 0..<100 {
+            if model.calendarSnappedMonth != nil { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard model.calendarSnappedMonth == model.engine.date(2026, 8, 1) else {
+            fputs("中断验证前尚未进入八月吸附动画\n", stderr)
+            throw CocoaError(.coderInvalidValue)
+        }
+        try wheel(phase: 1)
+        position(model.engine.date(2026, 8, 16), offset: 13)
+        try await Task.sleep(for: .milliseconds(350))
+        guard model.calendarSnappedMonth == nil else { throw CocoaError(.coderInvalidValue) }
+        try wheel(phase: 4)
+        try await Task.sleep(for: .milliseconds(450))
+        guard model.calendarSnappedMonth == nil else { throw CocoaError(.coderInvalidValue) }
+        let interruptedOffset = table.visibleRect.minY - table.rect(ofRow: timeline.weekRow(containing: model.engine.date(2026, 8, 16))).minY
+        guard abs(interruptedOffset - 13) < 1 else {
+            fputs("中断后周内偏移错误：\(interruptedOffset)\n", stderr)
+            throw CocoaError(.coderInvalidValue)
+        }
+
+        // 旧停止任务不能覆盖明确导航到的新月份。
+        try wheel()
+        position(model.engine.date(2026, 9, 1), offset: -20)
+        model.select(model.engine.date(2026, 12, 15))
+        try await Task.sleep(for: .milliseconds(500))
+        try assertFullMonth(model.engine.date(2026, 12, 1))
+
+        // 切换设置拆除列表后，待执行任务不应留下吸附状态。
+        try wheel()
+        position(model.engine.date(2026, 11, 1), offset: -20)
+        try await Task.sleep(for: .milliseconds(50))
+        model.showingSettings = true
+        try await Task.sleep(for: .milliseconds(400))
+        guard model.calendarSnappedMonth == nil else {
+            fputs("设置打开后仍有吸附状态\n", stderr)
+            throw CocoaError(.coderInvalidValue)
+        }
+        model.showingSettings = false
+        try await Task.sleep(for: .milliseconds(300))
+
+        for (year, month, name) in [(2026, 8, "six-weeks"), (2026, 2, "four-weeks"),
+                                    (1901, 1, "lower-bound"), (2100, 12, "upper-bound")] {
+            model.select(model.engine.date(year, month, 1))
+            try await Task.sleep(for: .milliseconds(300))
+            try assertFullMonth(model.month, in: try calendarTimelineTable())
+            try await saveSnapshot("snap-" + name, to: directory)
+        }
+        defaults.set("dark", forKey: "appearance")
+        defaults.set(2, forKey: "firstWeekday")
+        model.select(model.engine.date(2026, 3, 1))
+        try await Task.sleep(for: .milliseconds(300))
+        try assertFullMonth(model.month, weekdays: 2, in: try calendarTimelineTable())
+        try await saveSnapshot("snap-six-weeks-monday-dark", to: directory)
+        model.showingSettings = true
+        try await Task.sleep(for: .milliseconds(150))
+        model.showingSettings = false
+        try await Task.sleep(for: .milliseconds(300))
+        try assertFullMonth(model.month, weekdays: 2, in: try calendarTimelineTable())
+        defaults.set("light", forKey: "appearance")
+        model.goToToday()
     }
 
     private func verifyOverviewHover(directory: URL) async throws {

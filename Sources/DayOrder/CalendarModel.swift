@@ -11,6 +11,7 @@ final class CalendarModel: ObservableObject {
     @Published private(set) var calendarScrollRevision = 0
     private(set) var calendarScrollTarget: Date
     var calendarViewport: (date: Date, month: Date, offset: CGFloat)?
+    var calendarSnappedMonth: Date?
     @Published var showingSettings = false
     @Published var showingYearOverview = false
     @Published var yearDraft = ""
@@ -110,6 +111,7 @@ final class CalendarModel: ObservableObject {
         month = engine.monthStart(date)
         calendarScrollTarget = date
         calendarViewport = nil
+        calendarSnappedMonth = nil
         calendarScrollRevision += 1
         showingYearOverview = false
         showingYearEntry = false

@@ -24,6 +24,7 @@ struct CalendarContentOptions: Equatable {
 }
 
 struct CalendarTimelineView: NSViewRepresentable {
+    static let viewportHeight: CGFloat = 286
     @ObservedObject var model: CalendarModel
     let firstWeekday: Int
     let options: CalendarContentOptions
@@ -33,7 +34,7 @@ struct CalendarTimelineView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scroll = NSScrollView()
+        let scroll = CalendarTimelineScrollView()
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.scrollerStyle = .overlay
@@ -56,6 +57,12 @@ struct CalendarTimelineView: NSViewRepresentable {
         table.delegate = context.coordinator
         scroll.documentView = table
         context.coordinator.table = table
+        scroll.onActivity = { [weak coordinator = context.coordinator] in coordinator?.beginInteraction() }
+        scroll.onPause = { [weak coordinator = context.coordinator] in coordinator?.scheduleSnap() }
+        NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.liveScrollBegan),
+            name: NSScrollView.willStartLiveScrollNotification, object: scroll)
+        NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.liveScrollEnded),
+            name: NSScrollView.didEndLiveScrollNotification, object: scroll)
         scroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.scrolled),
             name: NSView.boundsDidChangeNotification, object: scroll.contentView)
@@ -83,6 +90,16 @@ struct CalendarTimelineView: NSViewRepresentable {
         private var scrollTask: Task<Void, Never>?
         private var scrollSerial = 0
         private var days: [Date: [DayInfo]] = [:]
+        private struct MonthSnap {
+            let month: Date
+            let weeks: ClosedRange<Int>
+            var heading: Int { weeks.lowerBound - 1 }
+        }
+        private var snapped: MonthSnap?
+        private var snapTask: Task<Void, Never>?
+        private var snapSerial = 0
+        private var animatingSnap = false
+        private var liveScrolling = false
 
         init(model: CalendarModel, firstWeekday: Int, options: CalendarContentOptions) {
             self.model = model
@@ -94,6 +111,11 @@ struct CalendarTimelineView: NSViewRepresentable {
         }
 
         func disconnect() {
+            cancelSnap()
+            if let scroll = table?.enclosingScrollView as? CalendarTimelineScrollView {
+                scroll.onActivity = nil
+                scroll.onPause = nil
+            }
             scrollSerial += 1
             scrollTask?.cancel()
             scrollTask = nil
@@ -104,7 +126,7 @@ struct CalendarTimelineView: NSViewRepresentable {
         }
 
         func update(firstWeekday: Int, options: CalendarContentOptions) {
-            guard let table, let scroll = table.enclosingScrollView else { return }
+            guard let table, table.enclosingScrollView != nil else { return }
             updating = true
             defer { updating = false }
             let rebuilt = firstWeekday != timeline.firstWeekday
@@ -115,6 +137,9 @@ struct CalendarTimelineView: NSViewRepresentable {
             selection = model.selection
             holidayRevision = model.holidayRevision
             if rebuilt {
+                cancelSnap()
+                if let snapped { table.unhideRows(at: IndexSet(integer: snapped.heading), withAnimation: []) }
+                snapped = nil
                 timeline = CalendarTimeline(engine: model.engine, firstWeekday: firstWeekday)
                 days.removeAll()
                 table.reloadData()
@@ -127,32 +152,135 @@ struct CalendarTimelineView: NSViewRepresentable {
                 }
             }
             if revision != model.calendarScrollRevision || rebuilt {
+                cancelSnap()
                 scrollSerial += 1
                 scrollTask?.cancel()
                 scrollTask = nil
                 let restoring = (revision == nil || rebuilt) ? model.calendarViewport : nil
+                let restoredMonth = model.calendarSnappedMonth
                 revision = model.calendarScrollRevision
-                table.layoutSubtreeIfNeeded()
-                let y: CGFloat
-                if let restoring {
-                    y = table.rect(ofRow: timeline.weekRow(containing: restoring.date, inMonth: restoring.month)).minY + restoring.offset
+                if let restoring, restoredMonth == nil {
+                    setSnapLayout(nil)
+                    moveViewport(to: table.rect(ofRow: timeline.weekRow(containing: restoring.date, inMonth: restoring.month)).minY + restoring.offset)
                 } else {
-                    let target = model.calendarScrollTarget
-                    let monthRow = timeline.weekRow(containing: model.engine.monthStart(target))
-                    let selectedRow = timeline.weekRow(containing: target)
-                    // 优先展示月初；六行月份的月底定位确保选中的日期完整可见。
-                    y = max(table.rect(ofRow: monthRow).minY,
-                            table.rect(ofRow: selectedRow).maxY - scroll.contentSize.height)
+                    let layout = monthLayout(for: restoredMonth ?? model.calendarScrollTarget)
+                    setSnapLayout(layout)
+                    if let layout { moveViewport(to: table.rect(ofRow: layout.weeks.lowerBound).minY) }
                 }
-                let limit = max(0, table.bounds.height - scroll.contentSize.height)
-                let point = table.convert(NSPoint(x: 0, y: min(max(0, y), limit)), to: scroll.contentView)
-                scroll.contentView.scroll(to: point)
-                scroll.reflectScrolledClipView(scroll.contentView)
             }
         }
 
+        private func monthLayout(for date: Date) -> MonthSnap? {
+            guard model.engine.isSupported(date) else { return nil }
+            let month = model.engine.monthStart(date)
+            let last = model.engine.addingDays(-1, to: model.engine.addingMonths(1, to: month))
+            let firstRow = timeline.weekRow(containing: month)
+            let lastRow = timeline.weekRow(containing: last)
+            return MonthSnap(month: month, weeks: firstRow...lastRow)
+        }
+
+        private func cancelSnap() {
+            snapSerial += 1
+            snapTask?.cancel()
+            snapTask = nil
+            animatingSnap = false
+        }
+
+        // 行高和标题只在整月状态切换时改变；导航与恢复均使用日期锚点，而非长列表的估算绝对坐标。
+        private func setSnapLayout(_ layout: MonthSnap?) {
+            guard let table else { return }
+            var changedRows = IndexSet()
+            if let snapped { changedRows.formUnion(IndexSet(snapped.weeks)) }
+            if let layout { changedRows.formUnion(IndexSet(layout.weeks)) }
+            if let snapped { table.unhideRows(at: IndexSet(integer: snapped.heading), withAnimation: []) }
+            snapped = layout
+            model.calendarSnappedMonth = layout?.month
+            if let layout { table.hideRows(at: IndexSet(integer: layout.heading), withAnimation: []) }
+            table.noteHeightOfRows(withIndexesChanged: changedRows)
+            table.layoutSubtreeIfNeeded()
+        }
+
+        private func moveViewport(to y: CGFloat) {
+            guard let table, let scroll = table.enclosingScrollView else { return }
+            let limit = max(0, table.bounds.height - scroll.contentSize.height)
+            scroll.contentView.scroll(to: table.convert(NSPoint(x: 0, y: min(max(0, y), limit)), to: scroll.contentView))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+
+        func beginInteraction() {
+            cancelSnap()
+            guard let table, snapped != nil else { return }
+            updating = true
+            defer { updating = false }
+            let row = table.row(at: NSPoint(x: 1, y: table.visibleRect.minY + 1))
+            let offset = row >= 0 ? table.visibleRect.minY - table.rect(ofRow: row).minY : 0
+            setSnapLayout(nil)
+            if row >= 0 { moveViewport(to: table.rect(ofRow: row).minY + offset) }
+        }
+
+        @objc func liveScrollBegan() {
+            liveScrolling = true
+            beginInteraction()
+        }
+
+        @objc func liveScrollEnded() {
+            liveScrolling = false
+            scheduleSnap()
+        }
+
+        func scheduleSnap() {
+            cancelSnap()
+            guard !liveScrolling,
+                  let scroll = table?.enclosingScrollView as? CalendarTimelineScrollView,
+                  !scroll.gestureActive else { return }
+            let serial = snapSerial
+            let requestedRevision = model.calendarScrollRevision
+            snapTask = Task { [weak self] in
+                do { try await Task.sleep(for: .milliseconds(220)) } catch { return }
+                guard let self else { return }
+                defer { if snapSerial == serial { snapTask = nil; animatingSnap = false } }
+                guard !Task.isCancelled, !liveScrolling, !scroll.gestureActive,
+                      requestedRevision == model.calendarScrollRevision,
+                      !model.showingSettings, !model.showingYearOverview,
+                      let table, table.window?.isVisible == true,
+                      let candidate = nearbyMonth() else { return }
+                animatingSnap = true
+                updating = true
+                let first = candidate.weeks.lowerBound
+                let offset = table.visibleRect.minY - table.rect(ofRow: first).minY
+                setSnapLayout(candidate)
+                moveViewport(to: table.rect(ofRow: first).minY + offset)
+                updating = false
+                model.browseMonth(containing: candidate.month)
+                let steps = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 1 : 10
+                for step in 1...steps {
+                    guard !Task.isCancelled, snapSerial == serial else { return }
+                    let progress = CGFloat(step) / CGFloat(steps)
+                    let remaining = pow(1 - progress, 3)
+                    moveViewport(to: table.rect(ofRow: first).minY + offset * remaining)
+                    if step < steps {
+                        do { try await Task.sleep(for: .milliseconds(16)) } catch { return }
+                    }
+                }
+                model.calendarViewport = (timeline.rows[first].date, candidate.month, 0)
+            }
+        }
+
+        private func nearbyMonth() -> MonthSnap? {
+            guard let table else { return nil }
+            let top = table.visibleRect.minY
+            let range = table.rows(in: NSRect(x: 0, y: max(0, top - 100), width: table.bounds.width, height: 200))
+            var nearest: (distance: CGFloat, date: Date)?
+            for row in range.location..<NSMaxRange(range) where timeline.rows.indices.contains(row) {
+                guard case .month(let date) = timeline.rows[row] else { continue }
+                let distance = abs(table.rect(ofRow: timeline.weekRow(containing: date)).minY - top)
+                if distance <= 44 && distance < (nearest?.distance ?? .infinity) { nearest = (distance, date) }
+            }
+            return nearest.flatMap { monthLayout(for: $0.date) }
+        }
+
         @objc func scrolled() {
-            guard !updating, scrollTask == nil else { return }
+            guard !updating, !animatingSnap, scrollTask == nil else { return }
             let requestedRevision = model.calendarScrollRevision
             scrollSerial += 1
             let serial = scrollSerial
@@ -168,15 +296,22 @@ struct CalendarTimelineView: NSViewRepresentable {
                 let weekRow = timeline.weekRow(containing: item.date, inMonth: item.sectionMonth)
                 model.calendarViewport = (item.date, item.sectionMonth,
                                           table.visibleRect.minY - table.rect(ofRow: weekRow).minY)
-                model.browseMonth(containing: item.sectionMonth)
+                model.browseMonth(containing: snapped?.month ?? item.sectionMonth)
             }
         }
 
         func numberOfRows(in tableView: NSTableView) -> Int { timeline.rows.count }
         func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
             switch timeline.rows[row] {
-            case .month: 30
-            case .week: 56
+            case .month: return 30
+            case .week:
+                if let snapped, snapped.weeks.contains(row) {
+                    let scale = tableView.window?.backingScaleFactor ?? 2
+                    let unit = CalendarTimelineView.viewportHeight * scale / CGFloat(snapped.weeks.count)
+                    let index = CGFloat(row - snapped.weeks.lowerBound)
+                    return (floor((index + 1) * unit) - floor(index * unit)) / scale
+                }
+                return 56
             }
         }
         func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }

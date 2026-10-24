@@ -90,7 +90,7 @@ struct CalendarView: View {
             .background(CalendarSurface.chrome(blurEnabled: blurEnabled))
             Divider().opacity(0.3)
             CalendarTimelineView(model: model, firstWeekday: effectiveWeekday, options: contentOptions)
-                .frame(height: 286)
+                .frame(height: CalendarTimelineView.viewportHeight)
                 .background(CalendarSurface.content)
             Divider().opacity(0.3)
             detail.padding(12).background(CalendarSurface.chrome(blurEnabled: blurEnabled))
