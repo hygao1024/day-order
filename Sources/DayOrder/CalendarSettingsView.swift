@@ -17,44 +17,36 @@ struct CalendarSettingsView: View {
     @Binding var showHolidaySchedule: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    displaySection
-                    calendarSection
-                    holidaySection
-                    about
-                }
-                .padding(.vertical, 12)
-                .padding(.horizontal, 1)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                displaySection
+                calendarSection
+                holidaySection
+                about
             }
-            .frame(height: 410)
-            .scrollIndicators(.automatic)
-            footer
+            .padding(.vertical, 16)
+            .padding(.horizontal, 12)
         }
+        .scrollIndicators(.never)
         .font(.system(size: 12))
         .controlSize(.small)
     }
 
-    private var header: some View {
+    var header: some View {
         HStack {
+            Text("设置").font(.system(size: 16, weight: .semibold))
+            Spacer()
             Button { model.showingSettings = false } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 13, weight: .medium))
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
+                Label("日历", systemImage: "chevron.left")
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 10)
+                    .frame(height: 24)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(SettingsCapsuleButtonStyle())
             .help("返回日历")
             .accessibilityLabel("返回日历")
-            Spacer()
-            Text("设置").font(.system(size: 14, weight: .semibold))
-            Spacer()
-            Color.clear.frame(width: 28, height: 28).accessibilityHidden(true)
         }
-        .padding(.bottom, 8)
-        .overlay(alignment: .bottom) { Divider() }
+        .padding(12)
     }
 
     private var displaySection: some View {
@@ -85,7 +77,7 @@ struct CalendarSettingsView: View {
             }
             separator
             toggle("毛玻璃效果", isOn: $blurEnabled)
-                .help("开启后模糊日历上下区域的背景；关闭后使用实色背景")
+                .help("开启后模糊弹窗外围背景；关闭后使用实色背景")
         }
     }
 
@@ -113,9 +105,15 @@ struct CalendarSettingsView: View {
             if showHolidaySchedule {
                 separator
                 row("中国大陆") {
-                    Button(model.holidayUpdatingYear == nil ? "更新\(String(model.displayedYear))年" : "更新中…") {
+                    Button {
                         model.updateHolidays(year: model.displayedYear)
+                    } label: {
+                        Text(model.holidayUpdatingYear == nil ? "更新\(String(model.displayedYear))年" : "更新中…")
+                            .padding(.horizontal, 8)
+                            .frame(height: 24)
                     }
+                    .font(.system(size: 11))
+                    .buttonStyle(SettingsCapsuleButtonStyle())
                     .disabled(model.holidayUpdatingYear != nil || !HolidayYear.supportedYears.contains(model.displayedYear))
                 }
                 if let message = model.holidayUpdateMessages[model.displayedYear] {
@@ -123,7 +121,7 @@ struct CalendarSettingsView: View {
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 12).padding(.bottom, 10)
+                        .padding(.top, 4)
                 }
             }
         }
@@ -140,41 +138,34 @@ struct CalendarSettingsView: View {
             .fixedSize(horizontal: false, vertical: true)
             .padding(.top, 6)
         } label: {
-            Text("关于日序").foregroundStyle(.secondary)
+            Text("关于日序").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 8)
     }
 
-    private var footer: some View {
+    var footer: some View {
         HStack(spacing: 6) {
             Image(systemName: "calendar").foregroundStyle(.secondary)
-            Text("日序").fontWeight(.medium)
+            Text("日序").font(.system(size: 14, weight: .semibold))
             Spacer()
             Button("退出日序") { NSApplication.shared.terminate(nil) }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
         }
         .font(.system(size: 11))
-        .padding(.horizontal, 4).padding(.top, 10)
-        .overlay(alignment: .top) { Divider() }
+        .frame(height: 42)
+        .padding(.horizontal, 12)
     }
 
     private var separator: some View {
-        Divider().padding(.horizontal, 12).opacity(0.55)
+        Divider().opacity(0.45)
     }
 
     private func group<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
-                .padding(.leading, 12)
             VStack(spacing: 0, content: content)
-                .background(Color(nsColor: .controlBackgroundColor).opacity(0.65),
-                            in: RoundedRectangle(cornerRadius: 10))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.05), lineWidth: 0.5)
-                }
         }
     }
 
@@ -184,8 +175,7 @@ struct CalendarSettingsView: View {
             Spacer(minLength: 8)
             control()
         }
-        .frame(minHeight: 32)
-        .padding(.horizontal, 12)
+        .frame(minHeight: 30)
     }
 
     private func choice<Value: Hashable>(_ title: String, selection: Binding<Value>,
@@ -199,13 +189,22 @@ struct CalendarSettingsView: View {
             }
             .pickerStyle(.inline)
         } label: {
-            Text(selectedTitle)
-                .foregroundStyle(.secondary)
-                .padding(.vertical, 6)
-                .contentShape(Rectangle())
+            HStack(spacing: 5) {
+                Text(selectedTitle)
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .frame(height: 24)
+            .background(.primary.opacity(0.045), in: Capsule())
+            .overlay { Capsule().strokeBorder(.primary.opacity(0.10), lineWidth: 0.5) }
+            .contentShape(Capsule())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.visible)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .clipShape(Capsule())
         .fixedSize()
         .accessibilityLabel(title)
         .accessibilityValue(selectedTitle)
@@ -216,7 +215,26 @@ struct CalendarSettingsView: View {
             Toggle(title, isOn: isOn)
                 .labelsHidden()
                 .toggleStyle(.switch)
+                .controlSize(.mini)
+                // 绑定同步时 NSSwitch 的隐式动画会同步重绘窗口，重入尚未结束的 SwiftUI 布局。
+                .transaction { $0.disablesAnimations = true }
                 .accessibilityLabel(title)
         }
+    }
+}
+
+private struct SettingsCapsuleButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
+            .opacity(isEnabled ? 1 : 0.5)
+            .background(.primary.opacity(isEnabled && configuration.isPressed ? 0.12 : isEnabled && isHovered ? 0.08 : 0.045), in: Capsule())
+            .overlay { Capsule().strokeBorder(.primary.opacity(0.10), lineWidth: 0.5) }
+            .contentShape(Capsule())
+            .clipShape(Capsule())
+            .onHover { isHovered = $0 }
     }
 }

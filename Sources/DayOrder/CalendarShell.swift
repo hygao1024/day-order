@@ -6,14 +6,15 @@ struct CalendarShell: NSViewRepresentable {
     let content: AnyView
     let footer: AnyView
     let yearOverview: Bool
+    let showingSettings: Bool
 
     func makeNSView(context: Context) -> CalendarShellView { CalendarShellView() }
 
     func updateNSView(_ view: CalendarShellView, context: Context) {
+        view.setPage(yearOverview: yearOverview, showingSettings: showingSettings)
         view.header.rootView = AnyView(header.frame(width: 320).fixedSize(horizontal: false, vertical: true))
         view.content.rootView = content
         view.footer.rootView = AnyView(footer.frame(width: 320).fixedSize(horizontal: false, vertical: true))
-        view.yearOverview = yearOverview
         view.invalidateIntrinsicContentSize()
         view.needsLayout = true
     }
@@ -23,14 +24,15 @@ struct CalendarShell: NSViewRepresentable {
     }
 }
 
-// 这三个托管视图跨月／年切换保持身份；只替换内容，动画不隐藏上下栏。
+// 三个页面共用这些托管视图；只替换内容，动画不隐藏上下栏。
 final class CalendarShellView: NSView {
     let header = NSHostingView(rootView: AnyView(EmptyView()))
     let content = NSHostingView(rootView: AnyView(EmptyView()))
     let footer = NSHostingView(rootView: AnyView(EmptyView()))
     private let headerClip = CalendarShellClipView()
     private let footerClip = CalendarShellClipView()
-    var yearOverview = false
+    private var yearOverview = false
+    private var settingsHeight: CGFloat?
     var transitionCard: NSRect?
     var transitionHeight: CGFloat?
     @MainActor private struct Geometry {
@@ -60,12 +62,19 @@ final class CalendarShellView: NSView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    func setPage(yearOverview: Bool, showingSettings: Bool) {
+        // 更新托管内容之前保留入口高度，避免设置自身的布局反向决定弹窗大小。
+        if showingSettings, settingsHeight == nil { settingsHeight = naturalSize.height }
+        if !showingSettings { settingsHeight = nil }
+        self.yearOverview = yearOverview
+    }
+
     private func measureGeometry() -> Geometry {
         let top = header.fittingSize.height
         let bottom = footer.fittingSize.height
         return Geometry(top: top, bottom: bottom,
-                        size: NSSize(width: 320, height: yearOverview ? 430
-                                     : top + CalendarTimelineView.viewportHeight + bottom))
+                        size: NSSize(width: 320, height: settingsHeight ?? (yearOverview ? 430
+                                     : top + CalendarTimelineView.viewportHeight + bottom)))
     }
 
     var naturalSize: NSSize { (animationGeometry ?? measureGeometry()).size }

@@ -23,23 +23,17 @@ struct CalendarView: View {
     private var effectiveWeekday: Int { firstWeekday == 1 ? 1 : 2 }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if model.showingSettings {
-                settings.padding(12).background(CalendarSurface.settings)
-            } else {
-                calendar
-            }
-        }
+        calendar
         .frame(width: 320)
         .preferredColorScheme(appearance == "light" ? .light : appearance == "dark" ? .dark : nil)
-        .onAppear(perform: applyAppearance)
+        // 原生窗口外观会回传到嵌套托管视图，避开 SwiftUI 正在执行的更新轮次。
+        .task(id: appearance) { applyAppearance() }
         .task(id: model.displayedYear) { await model.loadHolidayCache(year: model.displayedYear) }
-        .onChange(of: appearance) { applyAppearance() }
         .onChange(of: menuBarDisplay) { updateMenuBar() }
         .onChange(of: menuBarDateFormat) { updateMenuBar() }
         .onExitCommand {
-            if model.showingYearOverview { model.dismissYearLevel() }
-            else if model.showingSettings { model.showingSettings = false }
+            if model.showingSettings { model.showingSettings = false }
+            else if model.showingYearOverview { model.dismissYearLevel() }
             else { dismiss() }
         }
     }
@@ -47,24 +41,27 @@ struct CalendarView: View {
     private var calendar: some View {
         CalendarShell(
             header: AnyView(Group {
-                if model.showingYearOverview { YearOverviewHeader(model: model) }
+                if model.showingSettings { settings.header }
+                else if model.showingYearOverview { YearOverviewHeader(model: model) }
                 else { monthHeader }
             }),
             content: AnyView(Group {
-                if model.showingYearOverview {
+                if model.showingSettings { settings }
+                else if model.showingYearOverview {
                     YearCalendarScrollView(model: model, firstWeekday: effectiveWeekday)
                 } else {
                     CalendarTimelineView(model: model, firstWeekday: effectiveWeekday, options: contentOptions)
                 }
             }),
             footer: AnyView(Group {
-                if model.showingYearOverview {
+                if model.showingSettings { settings.footer }
+                else if model.showingYearOverview {
                     Text("点击月份查看 · 滚动浏览年份")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity).padding(.vertical, 7)
                 } else { detail.padding(12) }
             }),
-            yearOverview: model.showingYearOverview)
+            yearOverview: model.showingYearOverview, showingSettings: model.showingSettings)
     }
 
     private var monthHeader: some View {
@@ -184,7 +181,7 @@ struct CalendarView: View {
         .accessibilityElement(children: .contain)
     }
 
-    private var settings: some View {
+    private var settings: CalendarSettingsView {
         CalendarSettingsView(model: model,
                              menuBarDisplay: $menuBarDisplay, menuBarDateFormat: $menuBarDateFormat,
                              appearance: $appearance, blurEnabled: $blurEnabled, firstWeekday: $firstWeekday,

@@ -120,8 +120,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 guard let self, self.popover.isShown, let model = self.model,
                       event.window == self.popover.contentViewController?.view.window else { return false }
                 if event.keyCode == 53 {
-                    if model.showingYearOverview { model.dismissYearLevel() }
-                    else if model.showingSettings { model.showingSettings = false }
+                    if model.showingSettings { model.showingSettings = false }
+                    else if model.showingYearOverview { model.dismissYearLevel() }
                     else { self.popover.performClose(nil) }
                     return true
                 }
@@ -184,9 +184,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             model.select(model.today)
             defaults.set("light", forKey: "appearance")
             showPopover()
+            // 合成输入阶段不能因自动化宿主抢焦点而关闭弹窗。
+            popover.behavior = .applicationDefined
             // showPopover 会刷新真实日期；快照随后固定时钟，使用同一生产视图。
             model.today = model.engine.date(2026, 10, 23)
             model.select(model.today)
+            if ProcessInfo.processInfo.arguments.contains("--settings-transition-smoke") {
+                try await verifySettingsTransition(directory: directory)
+                try "设置过渡的容器形变、固定弹窗高度、常驻上下栏与背景、取消和减少动态效果验证通过。\n"
+                    .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+                return
+            }
+            if ProcessInfo.processInfo.arguments.contains("--settings-smoke") {
+                try await verifySettingsDesign(directory: directory)
+                try "设置页深浅色与材质、固定布局、滚动、偏好切换和返回验证通过。\n"
+                    .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.arguments.contains("--calendar-zoom-smoke") {
                 try await verifyCalendarZoom(directory: directory)
                 try "月年过渡的常驻上下栏与背景、日期位移、容器尺寸、反向展开、取消和减少动态效果验证通过。\n"
@@ -300,6 +316,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             try scrollSettings(toBottom: true)
             try await saveSnapshot("settings-bottom", to: directory)
             try scrollSettings(toBottom: false)
+            try await verifySettingsDesign(directory: directory)
+            try await verifySettingsTransition(directory: directory)
+            try await Task.sleep(for: .milliseconds(400))
+            // 无合成输入的偏好与材质回归使用生产弹窗行为，覆盖临时窗口的开关更新。
+            popover.behavior = .transient
             try await verifyMenuBar(directory: directory, defaults: defaults, domain: domain)
             try await verifyHolidays(directory: directory)
             if ProcessInfo.processInfo.arguments.contains("--holiday-network-smoke") {
@@ -1146,6 +1167,325 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard abs(scroll.contentView.bounds.origin.y - before) > 100 else {
             throw CocoaError(.coderInvalidValue)
         }
+    }
+
+    private func verifySettingsTransition(directory: URL) async throws {
+        guard let model, let presentation = presentationController else { throw CocoaError(.coderInvalidValue) }
+        let behavior = popover.behavior
+        let wasSettings = model.showingSettings
+        let wasYearOverview = model.showingYearOverview
+        let selection = model.selection
+        let preferences = ["appearance", "blurEnabled"].map { ($0, defaults.object(forKey: $0)) }
+        popover.behavior = .applicationDefined
+        presentation.reduceMotionOverride = false
+        defer {
+            popover.behavior = behavior
+            presentation.reduceMotionOverride = nil
+            for (key, value) in preferences {
+                if let value { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) }
+            }
+        }
+        // 上一个检查在 defer 中恢复偏好；先完成外观与控件更新，再捕获离开页面的快照。
+        try await Task.sleep(for: .milliseconds(400))
+        model.showingSettings = false
+        model.showingYearOverview = false
+        model.select(model.engine.date(2026, 10, 24))
+        try await Task.sleep(for: .milliseconds(450))
+        var report: [[String: Any]] = []
+        func pressEscape() throws {
+            guard let window = hostingController?.view.window,
+                  let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                      timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                      context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
+                      isARepeat: false, keyCode: 53) else { throw CocoaError(.coderInvalidValue) }
+            NSApp.postEvent(escape, atStart: false)
+        }
+        func sample(_ name: String, settings: Bool, reduced: Bool = false) async throws {
+            guard let shell = presentation.shell else { throw CocoaError(.coderInvalidValue) }
+            let size = popover.contentSize
+            let material = presentation.material
+            let selection = model.selection
+            let sourceCard = shell.content.frame
+            var frames: [[String: Double]] = []
+            model.showingSettings = settings
+            let began = ProcessInfo.processInfo.systemUptime
+            var savedMiddle = false
+            while presentation.isTransitioning, ProcessInfo.processInfo.systemUptime - began < 2 {
+                try await Task.sleep(for: .milliseconds(8))
+                guard presentation.shell === shell, presentation.material === material,
+                      shell.header.alphaValue == 1, shell.footer.alphaValue == 1,
+                      !shell.header.isHiddenOrHasHiddenAncestor, !shell.footer.isHiddenOrHasHiddenAncestor,
+                      abs(popover.contentSize.height - size.height) < 1 else {
+                    fputs("设置过渡重建外壳、隐藏上下栏或改变弹窗高度：\(name)\n", stderr)
+                    throw CocoaError(.coderInvalidValue)
+                }
+                if presentation.hasActiveFrameDriver, let card = presentation.movingCardFrame {
+                    guard presentation.matchedDayCount == 0, shell.content.alphaValue == 0 else {
+                        throw CocoaError(.coderInvalidValue)
+                    }
+                    let footer = presentation.view.convert(shell.footer.bounds, from: shell.footer)
+                    guard abs(footer.minY - card.maxY) < 1 else { throw CocoaError(.coderInvalidValue) }
+                    frames.append(["top": card.minY, "bottom": card.maxY, "height": card.height,
+                                   "progress": presentation.progress, "time": presentation.elapsedFraction])
+                    if !savedMiddle, presentation.progress > 0.35 {
+                        try saveViewSnapshot(presentation.view, name: name + "-middle", to: directory)
+                        savedMiddle = true
+                    }
+                }
+            }
+            guard frames.count >= 3, savedMiddle, !presentation.isTransitioning,
+                  presentation.transitionView == nil, !presentation.hasActiveFrameDriver,
+                  presentation.shell === shell, shell.content.alphaValue == 1,
+                  shell.transitionCard == nil, model.showingSettings == settings,
+                  model.selection == selection, abs(popover.contentSize.height - size.height) < 1 else {
+                fputs("设置过渡缺少中间帧或未恢复真实内容：\(name)，采样=\(frames.count)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+            let destination = shell.content.frame
+            if reduced {
+                guard frames.allSatisfy({ abs($0["top"]! - destination.minY) < 1 && abs($0["bottom"]! - destination.maxY) < 1 }) else {
+                    throw CocoaError(.coderInvalidValue)
+                }
+            } else {
+                guard frames.contains(where: { $0["time"]! >= 0.15 && $0["time"]! <= 0.5 && $0["progress"]! > $0["time"]! + 0.15 }),
+                      Set(frames.map { Int($0["height"]! * 2) }).count >= 3,
+                      abs(sourceCard.height - destination.height) > 10 else {
+                    fputs("设置白色容器未按既有缓出曲线连续形变：\(name)\n", stderr)
+                    throw CocoaError(.coderInvalidValue)
+                }
+                for pair in zip(frames, frames.dropFirst()) {
+                    for (edge, target) in [("top", destination.minY), ("bottom", destination.maxY)] {
+                        guard abs(pair.1[edge]! - target) <= abs(pair.0[edge]! - target) + 0.5 else {
+                            throw CocoaError(.coderInvalidValue)
+                        }
+                    }
+                }
+            }
+            let callbacks = presentation.driverCallbackCount
+            try await Task.sleep(for: .milliseconds(40))
+            guard presentation.driverCallbackCount == callbacks else { throw CocoaError(.coderInvalidValue) }
+            report.append(["name": name, "frames": frames, "windowHeight": size.height])
+            try saveViewSnapshot(presentation.view, name: name + "-end", to: directory)
+        }
+        for appearance in ["light", "dark"] {
+            for blur in [true, false] {
+                defaults.set(appearance, forKey: "appearance")
+                defaults.set(blur, forKey: "blurEnabled")
+                try await Task.sleep(for: .milliseconds(300))
+                let name = "settings-transition-\(appearance)-\(blur ? "blur" : "solid")"
+                try await sample(name + "-in", settings: true)
+                try await sample(name + "-out", settings: false)
+            }
+        }
+        for (name, date) in [("ordinary", model.engine.date(2026, 10, 25)),
+                             ("holiday", model.engine.date(2026, 10, 1))] {
+            model.select(date)
+            try await Task.sleep(for: .milliseconds(400))
+            try await sample("settings-transition-\(name)-in", settings: true)
+            try await sample("settings-transition-\(name)-out", settings: false)
+        }
+        model.openYearOverview()
+        try await Task.sleep(for: .milliseconds(400))
+        try await sample("settings-transition-year-in", settings: true)
+        try await sample("settings-transition-year-out", settings: false)
+        model.showingSettings = true
+        try await Task.sleep(for: .milliseconds(60))
+        try pressEscape()
+        try await Task.sleep(for: .milliseconds(400))
+        guard !model.showingSettings, model.showingYearOverview, popover.isShown,
+              !presentation.isTransitioning, presentation.shell?.content.alphaValue == 1 else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        model.showingYearOverview = false
+        try await Task.sleep(for: .milliseconds(400))
+        presentation.reduceMotionOverride = true
+        try await sample("settings-transition-reduced-in", settings: true, reduced: true)
+        try await sample("settings-transition-reduced-out", settings: false, reduced: true)
+        presentation.reduceMotionOverride = false
+        for interruption in ["preparation", "reverse", "close"] {
+            model.showingSettings = true
+            if interruption != "preparation" { try await Task.sleep(for: .milliseconds(60)) }
+            switch interruption {
+            case "close": popover.performClose(nil)
+            case "reverse": try pressEscape()
+            default: model.showingSettings = false
+            }
+            try await Task.sleep(for: .milliseconds(400))
+            let callbacks = presentation.driverCallbackCount
+            try await Task.sleep(for: .milliseconds(40))
+            guard !presentation.isTransitioning, !presentation.hasActiveFrameDriver,
+                  presentation.transitionView == nil, presentation.shell?.content.alphaValue == 1,
+                  presentation.driverCallbackCount == callbacks,
+                  interruption == "close" || (!model.showingSettings && popover.isShown) else {
+                throw CocoaError(.coderInvalidValue)
+            }
+            if interruption == "close" { showPopover() }
+            model.showingSettings = false
+            try await Task.sleep(for: .milliseconds(400))
+        }
+        model.select(selection)
+        model.showingYearOverview = wasYearOverview
+        try await Task.sleep(for: .milliseconds(400))
+        model.showingSettings = wasSettings
+        try await Task.sleep(for: .milliseconds(400))
+        try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("settings-transition-motion.json"))
+    }
+
+    private func verifySettingsDesign(directory: URL) async throws {
+        guard let model, let view = hostingController?.view, let presentation = presentationController else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        let behavior = popover.behavior
+        popover.behavior = .applicationDefined
+        let keys = ["appearance", "blurEnabled", "menuBarDisplay", "menuBarDateFormat", "firstWeekday", "showSolarTerms"]
+        let saved = keys.map { ($0, defaults.object(forKey: $0)) }
+        defer {
+            popover.behavior = behavior
+            for (key, value) in saved {
+                if let value { defaults.set(value, forKey: key) }
+                else { defaults.removeObject(forKey: key) }
+            }
+        }
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        func element(_ label: String) throws -> AnyObject {
+            func find(_ node: AnyObject) -> AnyObject? {
+                if node.accessibilityLabel?() == label { return node }
+                for child in node.accessibilityChildren?() ?? [] {
+                    if let found = find(child as AnyObject) { return found }
+                }
+                return nil
+            }
+            guard let result = find(view) else {
+                fputs("设置控件不可访问：\(label)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+            return result
+        }
+        func press(_ label: String) async throws {
+            guard try element(label).accessibilityPerformPress?() == true else {
+                fputs("无法操作设置控件：\(label)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+            try await Task.sleep(for: .milliseconds(400))
+        }
+        let originalSelection = model.selection
+        let originalYearOverview = model.showingYearOverview
+        model.showingSettings = false
+        model.showingYearOverview = false
+        for (name, date) in [("ordinary", model.engine.date(2026, 10, 25)),
+                             ("solar-term", model.engine.date(2026, 10, 24)),
+                             ("holiday", model.engine.date(2026, 10, 1))] {
+            model.select(date)
+            try await Task.sleep(for: .milliseconds(500))
+            let calendarSize = view.bounds.size
+            try await press("设置")
+            guard view.bounds.size == calendarSize, popover.contentSize == calendarSize else {
+                fputs("进入设置改变了弹窗尺寸：\(name)，日历=\(calendarSize)，设置=\(view.bounds.size)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+            try await saveSnapshot("settings-height-" + name, to: directory)
+            try await press("返回日历")
+            guard view.bounds.size == calendarSize, model.selection == date else {
+                throw CocoaError(.coderInvalidValue)
+            }
+        }
+        model.openYearOverview()
+        try await Task.sleep(for: .milliseconds(500))
+        let yearSize = view.bounds.size
+        model.showingSettings = true
+        try await saveSnapshot("settings-height-year", to: directory)
+        guard view.bounds.size == yearSize, popover.contentSize == yearSize else {
+            fputs("设置没有沿用年概览的高度。\n", stderr)
+            throw CocoaError(.coderInvalidValue)
+        }
+        try await press("返回日历")
+        guard view.bounds.size == yearSize else { throw CocoaError(.coderInvalidValue) }
+        model.showingYearOverview = originalYearOverview
+        model.select(originalSelection)
+        try await Task.sleep(for: .milliseconds(500))
+        let settingsSize = view.bounds.size
+        func validateLayout(_ scroll: NSScrollView) throws {
+            guard !scroll.hasVerticalScroller, !scroll.hasHorizontalScroller,
+                  abs(scroll.frame.width - 308) < 1, abs(scroll.frame.height - (settingsSize.height - 90)) < 1,
+                  view.bounds.size == settingsSize else { throw CocoaError(.coderInvalidValue) }
+        }
+        model.showingSettings = true
+        defaults.set(MenuBarDisplay.iconOnly.rawValue, forKey: "menuBarDisplay")
+        defaults.set(1, forKey: "firstWeekday")
+        defaults.set(true, forKey: "showSolarTerms")
+        for appearance in ["light", "dark"] {
+            for blur in [true, false] {
+                defaults.set(appearance, forKey: "appearance")
+                defaults.set(blur, forKey: "blurEnabled")
+                try await saveSnapshot("settings-\(blur ? "blur" : "solid")-\(appearance)", to: directory)
+                guard let scroll = descendants(view).compactMap({ $0 as? NSScrollView }).first,
+                      let document = scroll.documentView,
+                      presentation.material.isHidden == !blur else {
+                    fputs("设置面板尺寸、滚动条或材质状态不符合设计。\n", stderr)
+                    throw CocoaError(.coderInvalidValue)
+                }
+                try validateLayout(scroll)
+                if appearance == "light", blur {
+                    // 真实滚动条违反设计时，布局检查必须拒绝；随后恢复同一视图。
+                    scroll.hasVerticalScroller = true
+                    var rejected = false
+                    do { try validateLayout(scroll) } catch { rejected = true }
+                    scroll.hasVerticalScroller = false
+                    guard rejected else { throw CocoaError(.coderInvalidValue) }
+                }
+                let returnFrame = try element("返回日历").accessibilityFrame?()
+                let exitFrame = try element("退出日序").accessibilityFrame?()
+                let topOrigin = scroll.contentView.bounds.origin
+                try scrollSettings(toBottom: true)
+                try await saveSnapshot("settings-bottom-\(blur ? "blur" : "solid")-\(appearance)", to: directory)
+                guard try element("返回日历").accessibilityFrame?() == returnFrame,
+                      try element("退出日序").accessibilityFrame?() == exitFrame,
+                      scroll.contentView.bounds.origin != topOrigin,
+                      !scroll.documentVisibleRect.contains(document.bounds) else {
+                    throw CocoaError(.coderInvalidValue)
+                }
+                _ = try element("退出日序")
+                try scrollSettings(toBottom: false)
+                // 等待原生滚动触发的 SwiftUI 布局完成，再切换下一组外观。
+                try await Task.sleep(for: .milliseconds(400))
+            }
+        }
+        defaults.set("light", forKey: "appearance")
+        defaults.set(true, forKey: "blurEnabled")
+        try await Task.sleep(for: .milliseconds(400))
+        try await press("毛玻璃效果")
+        guard !defaults.bool(forKey: "blurEnabled"), presentation.material.isHidden else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        try await press("毛玻璃效果")
+        guard defaults.bool(forKey: "blurEnabled"), !presentation.material.isHidden else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        try await press("二十四节气")
+        guard !defaults.bool(forKey: "showSolarTerms") else { throw CocoaError(.coderInvalidValue) }
+        try await press("二十四节气")
+        guard defaults.bool(forKey: "showSolarTerms") else { throw CocoaError(.coderInvalidValue) }
+        defaults.set(MenuBarDisplay.iconAndDate.rawValue, forKey: "menuBarDisplay")
+        defaults.set(MenuBarDateFormat.yearMonthDayWeekday.rawValue, forKey: "menuBarDateFormat")
+        try await saveSnapshot("settings-long-date-format", to: directory)
+        _ = try element("日期格式")
+        try scrollSettings(toBottom: true)
+        try await press("关于日序")
+        try scrollSettings(toBottom: true)
+        try await saveSnapshot("settings-about-expanded", to: directory)
+        try await press("关于日序")
+        let savedMessage = model.holidayUpdateMessages[model.displayedYear]
+        model.holidayUpdateMessages[model.displayedYear] = "更新失败：暂时无法连接数据源，继续使用已收录的放假与调休安排。请检查网络连接后重试。"
+        try await Task.sleep(for: .milliseconds(400))
+        try scrollSettings(toBottom: true)
+        try await saveSnapshot("settings-update-message", to: directory)
+        model.holidayUpdateMessages[model.displayedYear] = savedMessage
+        let selection = model.selection
+        try await press("返回日历")
+        guard !model.showingSettings, model.selection == selection else { throw CocoaError(.coderInvalidValue) }
+        model.showingSettings = true
+        try await Task.sleep(for: .milliseconds(400))
     }
 
     private func scrollSettings(toBottom: Bool) throws {

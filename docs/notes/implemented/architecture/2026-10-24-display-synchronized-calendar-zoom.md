@@ -18,6 +18,8 @@ CalendarShell 在实际动画开始时冻结终点的头部、正文和底部尺
 
 本决定替换[日期缩放过渡](../feature/2026-10-24-calendar-zoom-transition.md)的固定睡眠驱动和[常驻日历外壳](../bug-fix/2026-10-24-persistent-calendar-chrome.md)的逐帧尺寸测量方式。日期选择、原生列表复用、滚动位置恢复、只有日期正文缩放及上下栏常驻保持不变。
 
+[设置容器过渡](../feature/2026-10-24-settings-container-transition.md)复用同一驱动与取消路径，设置往返只插值容器、不配对日期；这里的显示同步和短期布局缓存约束继续适用。
+
 ## Alternatives considered
 
 - 仅缩短时长或改变缓动曲线：不能减少逐帧布局与重复唤醒；保留已确认的运动节奏，先移除这些工作。

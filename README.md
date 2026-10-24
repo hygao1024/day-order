@@ -27,11 +27,12 @@ open build/DayOrder.app
 - 弹窗宽度为 320 pt（逻辑点），中间连续日期区固定高 286 pt，日期详情随内容调整高度；月视图和年概览的顶部、底部采用系统毛玻璃弹窗材质，随背景和深浅色外观变化，并遵循系统“减少透明度”偏好。月视图中间日期区采用 12 pt 连续圆角，左右各留 6 pt 外边距，外围沿用系统材质；日期区内侧各留 6 pt，保持日期列宽及星期栏对齐，不增加卡片阴影。中间日期区与浮动年份标题使用实色背景：浅色为白色，深色为深灰。周行之间仅保留细横线，今天红圈上下留白，月视图星期栏与日期数字使用半粗体，今天与其他日期的数字保持相同字重。设置入口位于底部日期详情标题右侧。
 - 年概览高 430 pt，顶部采用简洁返回入口、居中标题和“今天”胶囊按钮，底部提示“点击月份查看 · 滚动浏览年份”。中间滚动区采用 12 pt 连续圆角、左右各 6 pt 外边距，与月视图统一；外围共用系统材质。原生列表按可见行复用小月历、悬浮显示年份标题；月份行高为 144 pt，统一预留六周日期空间；标题与日期网格使用 8 pt 内边距，月份仅在悬停或按下时显示 8 pt 圆角底，浅色悬停底色为 `#F5F5F5`，深色使用适配底色，不增加阴影。仅显示公历日期，突出本月与今天，并沿用每周起始偏好。“返回”保留原日期；Esc 先退出年份输入，再返回月视图；“今天”直接返回当天。
 - 键盘方向键前后移动一天或一周；Page Up / Page Down（上翻页／下翻页）切月，Home（起始键）返回今天。
-- 齿轮打开设置：传统节日、中国公历节日、西方节日、世界日、节气开关，均默认开启；星期一或星期日起始；跟随系统、浅色或深色外观。“显示”分组中的“毛玻璃效果”默认开启，可关闭月视图与年概览上下区域的背景模糊，关闭后使用浅灰／深灰实色背景；中间日期区保持原样。设置保存在当前用户的应用偏好中，重新打开和重启后保留。
+- 齿轮打开设置：传统节日、中国公历节日、西方节日、世界日、节气开关，均默认开启；星期一或星期日起始；跟随系统、浅色或深色外观。“显示”分组中的“毛玻璃效果”默认开启，可关闭月视图、年概览与设置页外围的背景模糊，关闭后使用浅灰／深灰实色背景；中间日期区保持原样。设置保存在当前用户的应用偏好中，重新打开和重启后保留。
 - “菜单栏显示”可选图标和日期（默认）、仅日期、仅图标。圆角实心日期图标内显示设备所在时区的当天数字，不随弹框选中日期变化。
 - 日期格式可选月日＋星期（默认，如 `10月23日 周五`）、年月日、年月日＋星期、数字日期（如 `2026-10-23`）。选择后立即生效，重启后保留；仅图标模式隐藏格式选择，但保留之前的格式偏好。
 - “放假与调休”默认开启，在日期右上角显示「休／班」，详情说明对应假期或补班。设置中的“更新某年”联网获取当前浏览年份及翌年安排，成功后缓存；不自动后台联网。
-- 设置按显示、日历内容和放假安排分组，选项超过可视范围时可滚动；返回和退出入口固定显示，版本范围与数据来源位于“关于日序”。
+- 设置页宽 320 pt，高度沿用打开前的日历页面，进入设置不改变弹窗大小；顶部左对齐标题与“日历”胶囊返回按钮、底部退出入口固定显示，外围沿用主页面的系统材质。中间设置区填充标题和底栏之间的剩余空间，采用 12 pt 连续圆角、左右各 6 pt 外边距和深浅色实底；按显示、日历内容和放假安排分组，以留白和细线区分，选择器使用胶囊外观，开关保持原生交互。内容支持滚动，不显示滚动条；支持范围与数据来源位于可展开的“关于日序”。
+- 进入设置与返回日历复用约 220 ms 三次缓出的圆角容器形变，正文分阶段淡化，外围材质与上下栏常驻；日期数字随正文淡化。偏好不改变日期详情时，正常往返保持弹窗高度；若偏好改变了详情长度，返回后按日历内容调整。Esc 优先返回进入设置前的页面；快速反向直接结束旧过渡，关闭立即释放过渡；系统“减少动态效果”使用约 120 ms 短淡化。
 - 设置内可退出日序。应用不显示 Dock（程序坞）图标，不自动配置开机启动。
 
 ## 日期约定
@@ -81,10 +82,12 @@ open build/DayOrder.app
 ```sh
 swift test
 ./scripts/build-app.sh debug
-build/DayOrder.app/Contents/MacOS/DayOrder --smoke-test "$PWD/build/smoke"
+python3 scripts/run-smoke.py "$PWD/build/smoke"
 ```
 
-冒烟验证需要已登录的 macOS 图形会话，会短暂打开真实菜单栏弹窗，生成浅色、深色、六行月份、设置及公历节日与世界日显示／隐藏／重合、世界日长名称截图，以及连续日期区的小幅滚动、跨月选择不跳动、返回位置、范围边界、年概览、跨年滚动、年份输入错误与重复跳转、月份点击、星期日起始、菜单栏显示模式、单／双位日期图标截图与 `result.txt`，以及放假、补班、关闭标记和未收录年份截图，然后退出。它使用隔离的设置域，不改变日常偏好；月份导航点击及年概览的键盘与点击验证临时固定浮层，防止自动化宿主抢焦点，不覆盖外部点击关闭行为。仅 Debug（调试）构建支持此参数。截图用于人工检查布局，不代表 VoiceOver（旁白）或所有系统版本已经验证。
+冒烟验证需要已登录的 macOS 图形会话，会短暂打开真实菜单栏弹窗，生成浅色、深色、六行月份、设置及公历节日与世界日显示／隐藏／重合、世界日长名称截图，以及连续日期区的小幅滚动、跨月选择不跳动、返回位置、范围边界、年概览、跨年滚动、年份输入错误与重复跳转、月份点击、星期日起始、菜单栏显示模式、单／双位日期图标截图与 `result.txt`，以及放假、补班、关闭标记和未收录年份截图，然后退出。它使用隔离的设置域，不改变日常偏好；合成输入阶段固定浮层，防止自动化宿主抢焦点，尾部偏好与材质回归恢复生产环境的临时弹窗行为，不覆盖物理点击外部关闭。仅 Debug（调试）构建支持此参数。截图用于人工检查布局，不代表 VoiceOver（旁白）或所有系统版本已经验证。
+
+`run-smoke.py` 使用已构建的应用，保留全部运行输出到目标目录的 `runtime.log`，同时检查应用退出码和 SwiftUI 布局循环诊断；功能断言通过但日志包含 `AttributeGraph: cycle detected` 时仍判为失败。单次运行超过 300 秒会终止并报告失败。下列专项参数也通过同一入口执行；`result.txt` 只代表应用内的功能断言，最终结果以脚本退出码为准。
 
 月视图和年概览均以圆角内容区边缘分隔内容，外围材质连续连接顶部和底部。毛玻璃开启或关闭时均不留下意外透出桌面颜色的分隔缝。普通冒烟另生成 `rounded-calendar-design.png`，固定为 2026 年 10 月 24 日、星期日起始，用于检查圆角设计及四字节日布局。
 
@@ -94,10 +97,26 @@ build/DayOrder.app/Contents/MacOS/DayOrder --smoke-test "$PWD/build/smoke"
 
 普通冒烟同时生成 `timeline-scroll-benchmark.json`，记录连续日期区 120 次、每次 24 pt 往返滚动的主线程同步处理耗时；此记录不代表屏幕帧率，也不设置跨设备性能门槛。
 
+设置页可独立运行布局与交互验证：
+
+```sh
+python3 scripts/run-smoke.py "$PWD/build/settings-smoke" --settings-smoke
+```
+
+该检查覆盖普通日期、节气和假期详情及年概览进入设置时的尺寸保持、隐藏滚动条、滚动时返回入口位置、毛玻璃和节气开关即时生效、长日期格式、关于信息展开、长更新消息及返回日历保留选择，生成深浅色与毛玻璃开关组合的顶部和底部快照，以及 `result.txt`。更新消息使用隔离模型中的示例，不联网。普通冒烟也执行此检查；视图快照不代表窗口服务器的实际毛玻璃合成或 VoiceOver 操作已完整验证。
+
+设置过渡可独立采样：
+
+```sh
+python3 scripts/run-smoke.py "$PWD/build/settings-transition-smoke" --settings-transition-smoke
+```
+
+该检查生成 `settings-transition-motion.json`、中间与终点快照及 `result.txt`，验证圆角容器的三次缓出形变、往返高度保持、实例常驻、正文恢复及结束后停止刷新。覆盖普通日期、节气、假期详情与年概览入口，深浅色与材质开关、减少动态效果、准备阶段反向、Esc 中断及关闭取消；普通冒烟也执行此检查。
+
 年概览可独立运行已有交互验证及圆角外观快照：
 
 ```sh
-build/DayOrder.app/Contents/MacOS/DayOrder --smoke-test "$PWD/build/year-overview-smoke" --year-overview-smoke
+python3 scripts/run-smoke.py "$PWD/build/year-overview-smoke" --year-overview-smoke
 ```
 
 该检查覆盖跨年滚动、年份输入与重复跳转、鼠标和辅助功能月份选择、Esc 分层返回及日期边界；`year-rounded-{solid,blur}-{light,dark}.png` 展示设计稿对应日期在毛玻璃开关和深浅色下的圆角区域，`year-rounded-six-weeks.png` 检查紧凑行高下的六周月份。`year-month-hover-*.png` 及其 `-pressed` 快照检查月份留白、圆角和六周日期在悬停／按下时的表现。普通冒烟也执行同一组年概览验证。
@@ -105,7 +124,7 @@ build/DayOrder.app/Contents/MacOS/DayOrder --smoke-test "$PWD/build/year-overvie
 月视图与年概览的缩放过渡使用独立真实视图回归：
 
 ```sh
-build/DayOrder.app/Contents/MacOS/DayOrder --smoke-test "$PWD/build/calendar-zoom-smoke" --calendar-zoom-smoke
+python3 scripts/run-smoke.py "$PWD/build/calendar-zoom-smoke" --calendar-zoom-smoke
 ```
 
 该检查记录日期中间位置、时间与位移进度、白色容器与弹窗高度，生成 `zoom-motion.json`、起始／中间／结束快照及 `result.txt`；报告同时记录准备耗时、刷新回调时间戳、逐帧更新与绘制耗时，供同机对比。检查等待真实过渡完成并设超时，验证完成及取消后不再产生刷新回调；报告中的 `chrome` 采样检查切换开始、过程中与结束后使用同一组真实上下栏和材质实例，检查上下栏及祖先保持可见，并检查正文在结束后恢复。覆盖正反向、星期起始、日期上下界、自由浏览返回、Esc 中断、设置与关闭取消、目标月份不可见、减少动态效果，以及深浅色和毛玻璃开关。减少动态效果通过仅存在于调试构建的覆盖值验证，不修改系统偏好；采样不等同于屏幕帧率，桌面材质合成与实际操作手感仍需人工体验。
@@ -113,7 +132,7 @@ build/DayOrder.app/Contents/MacOS/DayOrder --smoke-test "$PWD/build/calendar-zoo
 月初吸附的独立回归通过真实视图和合成滚轮事件检查手势、惯性等待、月中不吸附、动画取消、导航取消、设置返回、四至六周完整显示、日期边界及深浅色布局：
 
 ```sh
-build/DayOrder.app/Contents/MacOS/DayOrder --smoke-test "$PWD/build/month-snap-smoke" --month-snap-smoke
+python3 scripts/run-smoke.py "$PWD/build/month-snap-smoke" --month-snap-smoke
 ```
 
 该检查生成截图、`result.txt` 和 `snap-motion.json`，另生成 `rounded-{solid,blur}-{light,dark}.png` 检查月视图圆角在毛玻璃开关及深浅色切换后的外观。过渡采样检查四至六周月份行高不变、可见周视图保持复用、位移逐步趋近目标，以及解除吸附不跳动；采样间隔不等于显示帧率，物理触控板的手感仍需人工体验。
@@ -121,7 +140,7 @@ build/DayOrder.app/Contents/MacOS/DayOrder --smoke-test "$PWD/build/month-snap-s
 “今天”按钮的滚动过渡使用独立真实视图回归：
 
 ```sh
-build/DayOrder.app/Contents/MacOS/DayOrder --smoke-test "$PWD/build/today-scroll-smoke" --today-scroll-smoke
+python3 scripts/run-smoke.py "$PWD/build/today-scroll-smoke" --today-scroll-smoke
 ```
 
 该检查通过真实按钮的辅助功能动作触发返回，生成 `today-scroll-motion.json`、到达快照和 `result.txt`。检查双向与远距离滚动的中间位置、本月中途返回、到达后选择、已对齐时不移动，以及新手势、选择、导航、重复点击、设置、年概览和关闭弹窗对旧动画的取消。系统开启“减少动态效果”时检查终点，跳过动画中间位置与中途取消；不修改系统偏好。此检查不等同于显示帧率或物理触控板体验。
@@ -129,7 +148,7 @@ build/DayOrder.app/Contents/MacOS/DayOrder --smoke-test "$PWD/build/today-scroll
 需要验证真实放假数据下载和缓存时，运行以下命令（同样使用隔离缓存，不修改日常数据）：
 
 ```sh
-build/DayOrder.app/Contents/MacOS/DayOrder --smoke-test "$PWD/build/holiday-network-smoke" --holiday-network-smoke
+python3 scripts/run-smoke.py "$PWD/build/holiday-network-smoke" --holiday-network-smoke
 ```
 
 该检查依赖网络及上游服务，会额外生成 `holiday-network-result.txt`。普通冒烟验证和单元测试不需要联网。
@@ -138,7 +157,7 @@ build/DayOrder.app/Contents/MacOS/DayOrder --smoke-test "$PWD/build/holiday-netw
 
 ```sh
 ./scripts/build-app.sh debug
-build/DayOrder.app/Contents/MacOS/DayOrder --smoke-test "$PWD/build/scroll-benchmark" --scroll-benchmark
+python3 scripts/run-smoke.py "$PWD/build/scroll-benchmark" --scroll-benchmark
 ```
 
 该测试执行 240 次固定 40 pt 的往返滚动，生成 `scroll-benchmark.json` 和截图；记录主线程滚动、布局与同步绘制的中位数、第 95 百分位和最大耗时。结果用于同机同配置对比，不等同于屏幕呈现帧率，也不作为跨设备的硬性性能门槛。完整冒烟另行检查月份鼠标点击和辅助功能按钮动作，并在往返滚动及迟到的鼠标进入通知后检查最多一个月份有悬停灰底。

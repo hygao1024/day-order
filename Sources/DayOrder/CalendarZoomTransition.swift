@@ -23,14 +23,14 @@ private struct CalendarZoomSnapshot {
     let card: NSRect
     let glyphs: [CalendarZoomGlyph]
 
-    @MainActor static func capture(_ root: NSView, month: Int) -> Self? {
+    @MainActor static func capture(_ root: NSView, month: Int, includeGlyphs: Bool) -> Self? {
         let views = descendants(root)
         guard let scroll = views.compactMap({ $0 as? NSScrollView }).first,
               let contentBitmap = scroll.bitmapImageRepForCachingDisplay(in: scroll.bounds) else { return nil }
         let card = root.convert(scroll.bounds, from: scroll)
         let headers = views.compactMap { $0 as? YearHeaderView }.filter { !$0.visibleRect.isEmpty }
             .map { root.convert($0.visibleRect, from: $0) }
-        let participants = views.compactMap { $0 as? any CalendarZoomParticipant }
+        let participants = (includeGlyphs ? views.compactMap { $0 as? any CalendarZoomParticipant } : [])
             .map { view in
                 (view, view.zoomGlyphs(month: month, in: root).filter { glyph in
                     !headers.contains { $0.intersects(glyph.frame) }
@@ -120,13 +120,14 @@ final class CalendarPresentationController: NSViewController {
             view.needsLayout = true
         }
         model.$showingYearOverview.removeDuplicates().dropFirst().sink { [weak self] year in
-            self?.prepare(year: year)
+            self?.prepare(.year(year))
         }.store(in: &subscriptions)
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification, object: defaults)
             .receive(on: RunLoop.main).sink { [weak self] _ in self?.updateMaterial() }
             .store(in: &subscriptions)
-        model.$showingSettings.filter { $0 }.sink { [weak self] _ in self?.cancelTransition() }
-            .store(in: &subscriptions)
+        model.$showingSettings.removeDuplicates().dropFirst().sink { [weak self] settings in
+            self?.prepare(.settings(settings))
+        }.store(in: &subscriptions)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
@@ -176,11 +177,29 @@ final class CalendarPresentationController: NSViewController {
         [view] + view.subviews.flatMap { descendants($0) }
     }
 
-    private func prepare(year: Bool) {
-        // 新请求使旧动画失效；关闭状态和设置页不创建过渡。
+    private enum Transition {
+        case year(Bool)
+        case settings(Bool)
+
+        var zoomsDates: Bool {
+            if case .year = self { return true }
+            return false
+        }
+
+        @MainActor func matches(_ model: CalendarModel) -> Bool {
+            switch self {
+            case .year(let year): return model.showingYearOverview == year && !model.showingSettings
+            case .settings(let settings): return model.showingSettings == settings
+            }
+        }
+    }
+
+    private func prepare(_ transition: Transition) {
+        // 中途切换直接收敛到最新页面；迟到的准备任务不能覆盖它。
         let interrupted = isTransitioning
         cancelTransition()
-        guard !interrupted, view.window?.isVisible == true, !model.showingSettings else { return }
+        guard !interrupted, view.window?.isVisible == true else { return }
+        if transition.zoomsDates, model.showingSettings { return }
         #if DEBUG
         let preparationStarted = ProcessInfo.processInfo.systemUptime
         displayTimestamps = []
@@ -190,7 +209,7 @@ final class CalendarPresentationController: NSViewController {
         let parts = model.engine.calendar.dateComponents([.year, .month], from: model.month)
         let month = parts.year! * 100 + parts.month!
         guard let shell = descendants(host.view).compactMap({ $0 as? CalendarShellView }).first,
-              let source = CalendarZoomSnapshot.capture(host.view, month: month) else { return }
+              let source = CalendarZoomSnapshot.capture(host.view, month: month, includeGlyphs: transition.zoomsDates) else { return }
         transitioningShell = shell
         let layer = CalendarZoomOverlay(source: source)
         layer.frame = view.bounds
@@ -213,7 +232,7 @@ final class CalendarPresentationController: NSViewController {
                     if displayLink == nil { finishTransition() }
                 }
             }
-            guard model.showingYearOverview == year, view.window?.isVisible == true else { return }
+            guard transition.matches(model), view.window?.isVisible == true else { return }
             // Published 在赋值前通知；快照可能消费旧页面的刷新，赋值后再通知视图读取新状态。
             model.objectWillChange.send()
             await Task.yield()
@@ -222,7 +241,7 @@ final class CalendarPresentationController: NSViewController {
             host.view.frame = NSRect(origin: .zero, size: targetSize)
             host.view.layoutSubtreeIfNeeded()
             shell.content.alphaValue = 1
-            let destination = CalendarZoomSnapshot.capture(host.view, month: month)
+            let destination = CalendarZoomSnapshot.capture(host.view, month: month, includeGlyphs: transition.zoomsDates)
             shell.content.alphaValue = 0
             guard let destination else { return }
             layer.destination = destination
@@ -230,7 +249,7 @@ final class CalendarPresentationController: NSViewController {
             #if DEBUG
             reduced = reduceMotionOverride ?? reduced
             #endif
-            reduced = reduced || layer.matchedDayCount == 0
+            reduced = reduced || (transition.zoomsDates && layer.matchedDayCount == 0)
             layer.reducedMotion = reduced
             shell.beginAnimation()
             animationDuration = reduced ? 0.12 : 0.22
