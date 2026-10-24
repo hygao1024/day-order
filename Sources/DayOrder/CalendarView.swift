@@ -61,7 +61,7 @@ struct CalendarView: View {
                     Spacer(minLength: 0)
                     monthNavigation
                 }
-                HStack(spacing: 2) {
+                HStack(spacing: 0) {
                     ForEach(0..<7) { index in
                         Text(weekdays[(effectiveWeekday - 1 + index) % 7])
                             .font(.system(size: 11, weight: .semibold))
@@ -72,14 +72,15 @@ struct CalendarView: View {
                 .accessibilityHidden(true)
             }
             .padding(12)
-            .background(CalendarSurface.chrome(blurEnabled: blurEnabled))
             CalendarTimelineView(model: model, firstWeekday: effectiveWeekday, options: contentOptions)
                 .frame(height: CalendarTimelineView.viewportHeight)
-                .background(CalendarSurface.content)
-                .overlay(alignment: .top) { CalendarSurface.separator }
-                .overlay(alignment: .bottom) { CalendarSurface.separator }
-            detail.padding(12).background(CalendarSurface.chrome(blurEnabled: blurEnabled))
+                .background(CalendarSurface.content,
+                            in: RoundedRectangle(cornerRadius: CalendarTimelineView.cornerRadius, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: CalendarTimelineView.cornerRadius, style: .continuous))
+                .padding(.horizontal, CalendarTimelineView.cardInset)
+            detail.padding(12)
         }
+        .background(CalendarSurface.chrome(blurEnabled: blurEnabled))
     }
 
     private var monthNavigation: some View {
@@ -91,7 +92,7 @@ struct CalendarView: View {
             .help("上个月（Page Up）")
             .accessibilityLabel("上个月")
             navigationDivider
-            Button { model.goToToday() } label: {
+            Button { model.goToToday(animated: true) } label: {
                 Text("今天").frame(width: 44, height: 24)
             }
             .help("回到今天（Home）")

@@ -10,6 +10,8 @@ final class CalendarModel: ObservableObject {
     @Published var month: Date
     @Published private(set) var calendarScrollRevision = 0
     private(set) var calendarScrollTarget: Date
+    // 非空表示动画请求，并记录请求时的选择以识别启动前的取消。
+    private(set) var calendarScrollAnimationSelection: Date?
     var calendarViewport: (date: Date, month: Date, offset: CGFloat)?
     var calendarSnappedMonth: Date?
     @Published var showingSettings = false
@@ -110,6 +112,7 @@ final class CalendarModel: ObservableObject {
         selection = date
         month = engine.monthStart(date)
         calendarScrollTarget = date
+        calendarScrollAnimationSelection = nil
         calendarViewport = nil
         calendarSnappedMonth = nil
         calendarScrollRevision += 1
@@ -161,8 +164,17 @@ final class CalendarModel: ObservableObject {
         select(engine.date(year, targetMonth, day))
     }
 
-    func goToToday() {
-        select(engine.clamped(today))
+    func goToToday(animated: Bool = false) {
+        let target = engine.clamped(today)
+        guard animated, !showingSettings, !showingYearOverview else {
+            select(target)
+            return
+        }
+        // 选择与详情在到达后更新；保留当前浏览位置供动画及中断恢复使用。
+        calendarScrollTarget = target
+        calendarScrollAnimationSelection = selection
+        calendarSnappedMonth = nil
+        calendarScrollRevision += 1
     }
 
     func canMoveMonth(_ amount: Int) -> Bool {

@@ -187,16 +187,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 NSApp.terminate(nil)
                 return
             }
+            if ProcessInfo.processInfo.arguments.contains("--today-scroll-smoke") {
+                try await verifyTodayScroll(directory: directory)
+                try "返回今天的连续位移、终点与取消验证通过。\n"
+                    .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.arguments.contains("--month-snap-smoke") {
                 try await verifyMonthSnapping(directory: directory)
+                defaults.set(1, forKey: "firstWeekday")
+                model.today = model.engine.date(2026, 10, 24)
+                model.select(model.today)
+                for blur in [false, true] {
+                    defaults.set(blur, forKey: "blurEnabled")
+                    for appearance in ["light", "dark"] {
+                        defaults.set(appearance, forKey: "appearance")
+                        try await saveSnapshot("rounded-\(blur ? "blur" : "solid")-\(appearance)", to: directory)
+                    }
+                }
                 try "月初吸附、惯性等待、中途取消、四至六周完整显示、返回恢复与边界验证通过。\n"
                     .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
                 NSApp.terminate(nil)
                 return
             }
             try await saveSnapshot("light-october", to: directory)
+            defaults.set(1, forKey: "firstWeekday")
             model.today = model.engine.date(2026, 10, 24)
             model.select(model.today)
+            try await saveSnapshot("rounded-calendar-design", to: directory)
             try await verifyMonthNavigation(directory: directory)
             model.today = model.engine.date(2026, 10, 23)
             model.select(model.today)
@@ -1075,6 +1094,153 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let end = max(0, document.bounds.height - scroll.contentView.bounds.height)
         scroll.contentView.scroll(to: NSPoint(x: 0, y: toBottom == document.isFlipped ? end : 0))
         scroll.reflectScrolledClipView(scroll.contentView)
+    }
+
+    private func verifyTodayScroll(directory: URL) async throws {
+        guard let model else { throw CocoaError(.coderInvalidValue) }
+        let behavior = popover.behavior
+        popover.behavior = .applicationDefined
+        defer { popover.behavior = behavior }
+        defaults.set(1, forKey: "firstWeekday")
+        func pressToday() throws {
+            func find(in element: AnyObject) -> AnyObject? {
+                if element.accessibilityRole?() == .button, element.accessibilityLabel?() == "今天" { return element }
+                for child in element.accessibilityChildren?() ?? [] {
+                    if let found = find(in: child as AnyObject) { return found }
+                }
+                return nil
+            }
+            guard let view = hostingController?.view, let button = find(in: view),
+                  button.accessibilityPerformPress?() == true else {
+                fputs("无法触发真实今天按钮\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+        }
+        var reports: [[String: Any]] = []
+        for (year, month) in [(2026, 9), (2026, 11), (1901, 1), (2100, 12), (2026, 10)] {
+            model.select(model.engine.date(year, month, 24))
+            try await Task.sleep(for: .milliseconds(400))
+            let table = try calendarTimelineTable()
+            if year == 2026, month == 10, let scroll = table.enclosingScrollView as? CalendarTimelineScrollView {
+                scroll.onActivity?()
+                scroll.contentView.scroll(to: NSPoint(x: 0, y: scroll.contentView.bounds.minY + 93))
+                scroll.reflectScrolledClipView(scroll.contentView)
+            }
+            let timeline = CalendarTimeline(engine: model.engine, firstWeekday: 1)
+            let targetRow = timeline.weekRow(containing: model.engine.monthStart(model.today))
+            let target = table.rect(ofRow: targetRow).minY
+            let start = table.visibleRect.minY
+            let startOffset = start - target
+            var previousOffset = startOffset
+            var samples: [Double] = []
+            let began = ProcessInfo.processInfo.systemUptime
+            try pressToday()
+            while ProcessInfo.processInfo.systemUptime - began < 0.8 {
+                try await Task.sleep(for: .milliseconds(8))
+                let y = table.visibleRect.minY
+                // 原生列表实现远处行时会修正累计坐标，比较相对目标周行的距离。
+                let offset = y - table.rect(ofRow: targetRow).minY
+                guard abs(offset) <= abs(previousOffset) + 0.6,
+                      offset * startOffset >= -0.6 else {
+                    fputs("返回今天的滚动反向或越过终点：来源=\(year)-\(month)，初始=\(startOffset)，前次=\(previousOffset)，当前=\(offset)\n", stderr)
+                    throw CocoaError(.coderInvalidValue)
+                }
+                if abs(offset) > 1, abs(offset - startOffset) > 1 {
+                    guard model.selection != model.today else {
+                        fputs("返回今天尚未到达就更新了选择和详情：来源=\(year)-\(month)，位置=\(y)，初始目标=\(target)，当前目标=\(table.rect(ofRow: targetRow).minY)\n", stderr)
+                        throw CocoaError(.coderInvalidValue)
+                    }
+                    samples.append(offset)
+                }
+                previousOffset = offset
+            }
+            guard NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || samples.count >= 3 else {
+                fputs("返回今天缺少连续中间位置，发生了直接跳转\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+            guard abs(table.visibleRect.minY - table.rect(ofRow: targetRow).minY) < 1, model.selection == model.today,
+                  model.calendarSnappedMonth == model.engine.monthStart(model.today) else {
+                fputs("返回今天未停在完整当月或未选中今天：来源=\(year)-\(month)，位置=\(table.visibleRect.minY)，初始目标=\(target)，当前目标=\(table.rect(ofRow: targetRow).minY)，选择=\(model.selection)，吸附=\(String(describing: model.calendarSnappedMonth))\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+            reports.append(["year": year, "month": month, "startOffset": startOffset, "offsets": samples])
+        }
+        try JSONSerialization.data(withJSONObject: reports, options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("today-scroll-motion.json"))
+        let aligned = try calendarTimelineTable().visibleRect.minY
+        try pressToday()
+        try await Task.sleep(for: .milliseconds(150))
+        guard abs(try calendarTimelineTable().visibleRect.minY - aligned) < 0.5 else {
+            fputs("今天所在月份已对齐时仍发生移动\n", stderr)
+            throw CocoaError(.coderInvalidValue)
+        }
+        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            for interruption in ["wheel-pending", "selection-pending", "wheel", "selection", "navigation", "repeat", "settings", "year", "close"] {
+                model.select(model.engine.date(2025, 1, 24))
+                try await Task.sleep(for: .milliseconds(300))
+                let table = try calendarTimelineTable()
+                let originalSelection = model.selection
+                try pressToday()
+                if !interruption.hasSuffix("-pending") { try await Task.sleep(for: .milliseconds(100)) }
+                let position = table.visibleRect.minY
+                let viewport = model.calendarViewport
+                switch interruption {
+                case "wheel", "wheel-pending":
+                    guard let scroll = table.enclosingScrollView as? CalendarTimelineScrollView,
+                          let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+                                           wheel1: 0, wheel2: 0, wheel3: 0) else { throw CocoaError(.coderInvalidValue) }
+                    cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: 1)
+                    guard let event = NSEvent(cgEvent: cg) else { throw CocoaError(.coderInvalidValue) }
+                    scroll.scrollWheel(with: event)
+                case "selection", "selection-pending": model.selectVisibleDay(model.engine.date(2026, 5, 12))
+                case "navigation": model.select(model.engine.date(2027, 2, 1))
+                case "repeat": try pressToday()
+                case "settings": model.showingSettings = true
+                case "year": model.openYearOverview()
+                default: popover.performClose(nil)
+                }
+                try await Task.sleep(for: .milliseconds(650))
+                if interruption == "repeat" {
+                    guard model.selection == model.today else { throw CocoaError(.coderInvalidValue) }
+                } else if interruption == "navigation" {
+                    guard model.selection == model.engine.date(2027, 2, 1),
+                          model.calendarSnappedMonth == model.engine.date(2027, 2, 1) else {
+                        throw CocoaError(.coderInvalidValue)
+                    }
+                } else {
+                    let expected = interruption.hasPrefix("selection") ? model.engine.date(2026, 5, 12) : originalSelection
+                    guard model.selection == expected else {
+                        fputs("取消返回今天后，旧动画覆盖了选择：\(interruption)\n", stderr)
+                        throw CocoaError(.coderInvalidValue)
+                    }
+                    if interruption.hasPrefix("wheel") || interruption.hasPrefix("selection") || interruption == "close" {
+                        guard abs(table.visibleRect.minY - position) < 1 else {
+                            fputs("取消返回今天后仍继续移动：\(interruption)\n", stderr)
+                            throw CocoaError(.coderInvalidValue)
+                        }
+                    }
+                }
+                if interruption == "settings" || interruption == "year" {
+                    model.showingSettings = false
+                    model.showingYearOverview = false
+                    try await Task.sleep(for: .milliseconds(300))
+                    let restored = try calendarTimelineTable()
+                    guard let viewport else { throw CocoaError(.coderInvalidValue) }
+                    let layout = CalendarTimeline(engine: model.engine, firstWeekday: 1)
+                    let row = layout.weekRow(containing: viewport.date, inMonth: viewport.month)
+                    guard abs(restored.visibleRect.minY - restored.rect(ofRow: row).minY - viewport.offset) < 1 else {
+                        fputs("中断返回今天后未恢复中途位置：\(interruption)\n", stderr)
+                        throw CocoaError(.coderInvalidValue)
+                    }
+                }
+                if interruption == "close" {
+                    showPopover()
+                    model.today = model.engine.date(2026, 10, 23)
+                }
+            }
+        }
+        model.goToToday()
+        try await saveSnapshot("today-scroll-arrived", to: directory)
     }
 
     private func verifyMonthNavigation(directory: URL) async throws {
