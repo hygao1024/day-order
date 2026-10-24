@@ -109,7 +109,7 @@ struct CalendarTimelineView: NSViewRepresentable {
 
         init(model: CalendarModel, firstWeekday: Int, options: CalendarContentOptions) {
             self.model = model
-            timeline = CalendarTimeline(engine: model.engine, firstWeekday: firstWeekday)
+            timeline = model.calendarTimeline(firstWeekday: firstWeekday)
             self.options = options
             today = model.today
             selection = model.selection
@@ -144,7 +144,7 @@ struct CalendarTimelineView: NSViewRepresentable {
             holidayRevision = model.holidayRevision
             if rebuilt {
                 cancelSnap()
-                timeline = CalendarTimeline(engine: model.engine, firstWeekday: firstWeekday)
+                timeline = model.calendarTimeline(firstWeekday: firstWeekday)
                 days.removeAll()
                 table.reloadData()
             } else if changed {

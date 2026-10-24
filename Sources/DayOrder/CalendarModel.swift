@@ -5,6 +5,25 @@ import SwiftUI
 @MainActor
 final class CalendarModel: ObservableObject {
     let engine: CalendarEngine
+    // 只缓存当前星期起始方式的不可变行索引；页面生命周期仍由各自的视图拥有。
+    private var timelineIndex: CalendarTimeline?
+    #if DEBUG
+    var timelineBuildMilliseconds = 0.0
+    #endif
+
+    func calendarTimeline(firstWeekday: Int) -> CalendarTimeline {
+        let weekday = firstWeekday == 1 ? 1 : 2
+        if let timelineIndex, timelineIndex.firstWeekday == weekday { return timelineIndex }
+        #if DEBUG
+        let began = ProcessInfo.processInfo.systemUptime
+        #endif
+        let index = CalendarTimeline(engine: engine, firstWeekday: weekday)
+        timelineIndex = index
+        #if DEBUG
+        timelineBuildMilliseconds += (ProcessInfo.processInfo.systemUptime - began) * 1000
+        #endif
+        return index
+    }
     @Published var today: Date
     @Published var selection: Date
     @Published var month: Date

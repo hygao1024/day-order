@@ -46,12 +46,21 @@ final class CalendarShellView: NSView {
         }
     }
     private var animationGeometry: Geometry?
+    private let oldHeader = CalendarChromeSnapshotView()
+    private let oldFooter = CalendarChromeSnapshotView()
+    var chromeCoverage: CGFloat {
+        min(header.alphaValue + oldHeader.alphaValue, footer.alphaValue + oldFooter.alphaValue)
+    }
     override var isFlipped: Bool { true }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         headerClip.addSubview(header)
         footerClip.addSubview(footer)
+        headerClip.addSubview(oldHeader)
+        footerClip.addSubview(oldFooter)
+        oldHeader.alphaValue = 0
+        oldFooter.alphaValue = 0
         addSubview(headerClip)
         addSubview(content)
         addSubview(footerClip)
@@ -64,7 +73,7 @@ final class CalendarShellView: NSView {
 
     func setPage(yearOverview: Bool, showingSettings: Bool) {
         // 更新托管内容之前保留入口高度，避免设置自身的布局反向决定弹窗大小。
-        if showingSettings, settingsHeight == nil { settingsHeight = naturalSize.height }
+        if showingSettings, settingsHeight == nil { settingsHeight = transitionHeight ?? naturalSize.height }
         if !showingSettings { settingsHeight = nil }
         self.yearOverview = yearOverview
     }
@@ -95,6 +104,27 @@ final class CalendarShellView: NSView {
         animationGeometry = measureGeometry()
     }
 
+    func prepareTransition() {
+        // 中途重定向取当前合成结果，避免文字退回上一个页面的初始透明度。
+        let headerImage = CalendarSnapshotImage.capture(headerClip, in: headerClip.bounds)
+        let footerImage = CalendarSnapshotImage.capture(footerClip, in: footerClip.bounds)
+        for (snapshot, image, live, clip) in [(oldHeader, headerImage, header, headerClip),
+                                             (oldFooter, footerImage, footer, footerClip)] {
+            snapshot.image = image
+            snapshot.frame = NSRect(origin: .zero, size: clip.bounds.size)
+            snapshot.alphaValue = image == nil ? 0 : 1
+            live.alphaValue = image == nil ? 1 : 0
+        }
+        animationGeometry = nil
+    }
+
+    func updateChrome(fraction: CGFloat) {
+        for (snapshot, live) in [(oldHeader, header), (oldFooter, footer)] {
+            snapshot.alphaValue = snapshot.image == nil ? 0 : 1 - fraction
+            live.alphaValue = snapshot.image == nil ? 1 : fraction
+        }
+    }
+
     func updateTransition(card: NSRect, height: CGFloat) {
         transitionCard = card
         transitionHeight = height
@@ -119,8 +149,23 @@ final class CalendarShellView: NSView {
         transitionCard = nil
         transitionHeight = nil
         content.alphaValue = 1
+        header.alphaValue = 1
+        footer.alphaValue = 1
+        oldHeader.image = nil
+        oldFooter.image = nil
+        oldHeader.alphaValue = 0
+        oldFooter.alphaValue = 0
         invalidateIntrinsicContentSize()
         needsLayout = true
+    }
+}
+
+private final class CalendarChromeSnapshotView: NSView {
+    var image: NSImage? { didSet { needsDisplay = true } }
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        image?.draw(in: bounds, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
     }
 }
 
