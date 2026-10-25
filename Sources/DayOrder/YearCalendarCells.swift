@@ -37,6 +37,13 @@ final class MonthPairView: NSView {
         self.right.configure(right, firstWeekday: firstWeekday, today: today) { select(right.month) }
     }
 
+    func zoomMonthFrames(in root: NSView) -> [(Int, NSRect)] {
+        [left, right].compactMap { button in
+            guard let month = button.monthID, !button.visibleRect.isEmpty else { return nil }
+            return (month, root.convert(button.bounds, from: button))
+        }
+    }
+
     override func layout() {
         super.layout()
         let inset = YearCalendarLayout.contentInset
@@ -51,6 +58,7 @@ final class MonthPairView: NSView {
 private final class MiniMonthButton: NSButton, CalendarZoomParticipant {
     var zoomHiddenDays: Set<Int> = []
     private var monthLayout: MiniMonthLayout?
+    var monthID: Int? { monthLayout.map { $0.year * 100 + $0.month } }
     private var firstWeekday = 2
     private var todayDay: Int?
     private var onSelect: (() -> Void)?
@@ -116,13 +124,15 @@ private final class MiniMonthButton: NSButton, CalendarZoomParticipant {
                          yRadius: YearCalendarLayout.monthCornerRadius).fill()
         }
         let inset = YearCalendarLayout.monthContentInset
-        let heading = todayDay == nil ? Self.months[month.month - 1] : Self.currentMonths[month.month - 1]
-        heading.draw(at: NSPoint(x: inset, y: inset))
-        let columnWidth = (bounds.width - 2 * inset) / 7
-        for column in 0..<7 {
-            Self.weekdays[(firstWeekday - 1 + column) % 7]
-                .draw(centeredIn: NSRect(x: inset + CGFloat(column) * columnWidth,
-                                       y: inset + 22, width: columnWidth, height: 10))
+        if zoomHiddenDays.isEmpty {
+            let heading = todayDay == nil ? Self.months[month.month - 1] : Self.currentMonths[month.month - 1]
+            heading.draw(at: NSPoint(x: inset, y: inset))
+            let columnWidth = (bounds.width - 2 * inset) / 7
+            for column in 0..<7 {
+                Self.weekdays[(firstWeekday - 1 + column) % 7]
+                    .draw(centeredIn: NSRect(x: inset + CGFloat(column) * columnWidth,
+                                           y: inset + 22, width: columnWidth, height: 10))
+            }
         }
         for day in 1...month.dayCount {
             if zoomHiddenDays.contains(day) { continue }
@@ -137,19 +147,26 @@ private final class MiniMonthButton: NSButton, CalendarZoomParticipant {
         }
     }
 
-    func zoomGlyphs(month: Int, in root: NSView) -> [CalendarZoomGlyph] {
+    func zoomAnchors(month: Int, in root: NSView) -> [CalendarZoomAnchor] {
         guard let layout = monthLayout, layout.year * 100 + layout.month == month,
               visibleRect.height > 30 else { return [] }
-        var result: [CalendarZoomGlyph] = []
+        var result: [CalendarZoomAnchor] = []
         for day in 1...layout.dayCount {
             let rect = dateFrame(day, in: layout)
-            if visibleRect.contains(rect) {
-                result.append(CalendarZoomGlyph(day: day, frame: root.convert(rect, from: self),
-                    font: .monospacedDigitSystemFont(ofSize: 9, weight: .regular),
+            if visibleRect.intersects(rect) {
+                result.append(CalendarZoomAnchor(day: day, frame: root.convert(rect, from: self),
+                    fontSize: 9, weight: NSFont.Weight.regular.rawValue,
                     color: todayDay == day ? .white : .labelColor, circle: todayDay == day))
             }
         }
         return result
+    }
+
+    func zoomCaption(month: Int, in root: NSView) -> CalendarZoomCaption? {
+        guard monthID == month else { return nil }
+        let rect = NSRect(x: 0, y: 0, width: bounds.width, height: YearCalendarLayout.monthContentInset + 37)
+        guard let image = NSImage(data: dataWithPDF(inside: rect)) else { return nil }
+        return CalendarZoomCaption(image: image, frame: root.convert(rect, from: self))
     }
 
     private func dateFrame(_ day: Int, in month: MiniMonthLayout) -> NSRect {

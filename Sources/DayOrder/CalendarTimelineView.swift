@@ -64,6 +64,7 @@ struct CalendarTimelineView: NSViewRepresentable {
         table.delegate = context.coordinator
         scroll.documentView = table
         context.coordinator.table = table
+        model.overviewFocusSource = context.coordinator
         scroll.onActivity = { [weak coordinator = context.coordinator] in coordinator?.beginInteraction() }
         scroll.onPause = { [weak coordinator = context.coordinator] in coordinator?.scheduleSnap() }
         NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.liveScrollBegan),
@@ -84,7 +85,7 @@ struct CalendarTimelineView: NSViewRepresentable {
         coordinator.disconnect()
     }
 
-    @MainActor final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    @MainActor final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, CalendarOverviewFocusSource {
         let model: CalendarModel
         private(set) var timeline: CalendarTimeline
         weak var table: NSTableView?
@@ -117,6 +118,7 @@ struct CalendarTimelineView: NSViewRepresentable {
         }
 
         func disconnect() {
+            if model.overviewFocusSource === self { model.overviewFocusSource = nil }
             cancelSnap()
             if let scroll = table?.enclosingScrollView as? CalendarTimelineScrollView {
                 scroll.onActivity = nil
@@ -292,6 +294,25 @@ struct CalendarTimelineView: NSViewRepresentable {
             model.calendarViewport = (item.date, item.sectionMonth,
                                       table.visibleRect.minY - table.rect(ofRow: weekRow).minY)
             model.browseMonth(containing: model.calendarSnappedMonth ?? item.sectionMonth)
+        }
+
+        func prepareOverviewFocus() -> Date? {
+            guard let table, table.enclosingScrollView != nil else { return nil }
+            cancelSnap()
+            // 点击时读取实际视口，不能等待异步滚动通知，也不能让待执行的吸附改变起点。
+            recordViewport()
+            let visible = table.visibleRect
+            let range = table.rows(in: visible)
+            var areas: [Date: CGFloat] = [:]
+            for row in range.location..<NSMaxRange(range) where timeline.rows.indices.contains(row) {
+                let intersection = table.rect(ofRow: row).intersection(visible)
+                guard !intersection.isNull, !intersection.isEmpty else { continue }
+                // 标题和补位周属于其月份区块，不重复计入相邻月份。
+                areas[timeline.rows[row].sectionMonth, default: 0] += intersection.width * intersection.height
+            }
+            return areas.max { lhs, rhs in
+                lhs.value == rhs.value ? lhs.key < rhs.key : lhs.value < rhs.value
+            }?.key
         }
 
         private func nearbyMonth() -> MonthSnap? {
@@ -494,10 +515,9 @@ private final class CalendarDayButton: NSButton, CalendarZoomParticipant {
             }
         }
         let circle = dayNumberFrame
-        let hideDate = zoomHiddenDays.contains(day.day)
-        if highlightedToday && !hideDate { Self.accent.setFill(); NSBezierPath(ovalIn: circle).fill() }
-        let weekend = day.weekday == 1 || day.weekday == 7
-        if !hideDate {
+        if !zoomHiddenDays.contains(day.day) {
+            if highlightedToday { Self.accent.setFill(); NSBezierPath(ovalIn: circle).fill() }
+            let weekend = day.weekday == 1 || day.weekday == 7
             drawText(String(day.day), rect: circle, font: .monospacedDigitSystemFont(ofSize: 16, weight: .semibold),
                      color: !isInMonth ? muted : today ? .white : weekend ? .secondaryLabelColor : .labelColor)
         }
@@ -516,13 +536,13 @@ private final class CalendarDayButton: NSButton, CalendarZoomParticipant {
         }
     }
 
-    func zoomGlyphs(month: Int, in root: NSView) -> [CalendarZoomGlyph] {
+    func zoomAnchors(month: Int, in root: NSView) -> [CalendarZoomAnchor] {
         guard let day, day.year * 100 + day.month == month, isInMonth, isEnabled else { return [] }
         let circle = dayNumberFrame
-        guard visibleRect.contains(circle) else { return [] }
+        guard visibleRect.intersects(circle) else { return [] }
         let weekend = day.weekday == 1 || day.weekday == 7
-        return [CalendarZoomGlyph(day: day.day, frame: root.convert(circle, from: self),
-            font: .monospacedDigitSystemFont(ofSize: 16, weight: .semibold),
+        return [CalendarZoomAnchor(day: day.day, frame: root.convert(circle, from: self),
+            fontSize: 16, weight: NSFont.Weight.semibold.rawValue,
             color: today ? .white : weekend ? .secondaryLabelColor : .labelColor, circle: today)]
     }
 

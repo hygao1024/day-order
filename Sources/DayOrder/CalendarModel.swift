@@ -3,6 +3,11 @@ import Foundation
 import SwiftUI
 
 @MainActor
+protocol CalendarOverviewFocusSource: AnyObject {
+    func prepareOverviewFocus() -> Date?
+}
+
+@MainActor
 final class CalendarModel: ObservableObject {
     let engine: CalendarEngine
     // 只缓存当前星期起始方式的不可变行索引；页面生命周期仍由各自的视图拥有。
@@ -33,6 +38,8 @@ final class CalendarModel: ObservableObject {
     private(set) var calendarScrollAnimationSelection: Date?
     var calendarViewport: (date: Date, month: Date, offset: CGFloat)?
     var calendarSnappedMonth: Date?
+    weak var overviewFocusSource: (any CalendarOverviewFocusSource)?
+    private(set) var overviewFocusMonth: Date?
     @Published var showingSettings = false
     @Published var showingYearOverview = false
     @Published var yearDraft = ""
@@ -128,6 +135,7 @@ final class CalendarModel: ObservableObject {
 
     func select(_ date: Date) {
         guard engine.isSupported(date) else { return }
+        overviewFocusMonth = nil
         selection = date
         month = engine.monthStart(date)
         calendarScrollTarget = date
@@ -150,7 +158,9 @@ final class CalendarModel: ObservableObject {
     }
 
     func openYearOverview() {
-        let parts = engine.calendar.dateComponents([.year, .month], from: month)
+        let focus = overviewFocusSource?.prepareOverviewFocus() ?? overviewFocusMonth ?? month
+        overviewFocusMonth = focus
+        let parts = engine.calendar.dateComponents([.year, .month], from: focus)
         yearDraft = String(parts.year!)
         overviewTarget = parts.year! * 100 + ((parts.month! - 1) / 2 * 2 + 1)
         overviewScrollRevision += 1

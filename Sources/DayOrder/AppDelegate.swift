@@ -203,6 +203,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 NSApp.terminate(nil)
                 return
             }
+            if ProcessInfo.processInfo.arguments.contains("--calendar-grid-smoke") {
+                try await verifyCalendarGrid(directory: directory)
+                try "真实页面的受控时间绘制验证通过；此检查不验证显示刷新驱动或物理帧率。\n"
+                    .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.arguments.contains("--calendar-zoom-smoke") {
                 try await verifyCalendarZoom(directory: directory)
                 try "月年过渡的常驻上下栏与背景、日期位移、容器尺寸、反向展开、取消和减少动态效果验证通过。\n"
@@ -1270,7 +1277,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                   presentation.shell === shell, shell.content.alphaValue == 1,
                   shell.transitionCard == nil, model.showingSettings == settings,
                   model.selection == selection, abs(popover.contentSize.height - size.height) < 1 else {
-                fputs("设置过渡缺少中间帧或未恢复真实内容：\(name)，采样=\(frames.count)\n", stderr)
+                fputs("设置过渡缺少中间帧或未恢复真实内容：\(name)，采样=\(frames.count)，进度=\(presentation.progress)，运动时间=\(presentation.motionSeconds)，回调=\(presentation.driverCallbackCount)，驱动=\(presentation.hasActiveFrameDriver)\n", stderr)
                 throw CocoaError(.coderInvalidValue)
             }
             let destination = shell.content.frame
@@ -1770,6 +1777,105 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         model.select(model.today)
     }
 
+    private func verifyCalendarGrid(directory: URL) async throws {
+        guard let model, let presentation = presentationController else { throw CocoaError(.coderInvalidValue) }
+        presentation.reduceMotionOverride = false
+        defer { presentation.reduceMotionOverride = nil; presentation.cancelTransition() }
+        var report: [[String: Any]] = []
+        func prepared() async throws {
+            let began = ProcessInfo.processInfo.systemUptime
+            while !presentation.isPreparedForSampling, ProcessInfo.processInfo.systemUptime - began < 2 {
+                try await Task.sleep(for: .milliseconds(2))
+            }
+            guard presentation.isPreparedForSampling else { throw CocoaError(.coderInvalidValue) }
+        }
+        for (year, month, weekday, offset) in [(2026, 10, 1, 0), (2026, 3, 2, 0), (2021, 2, 2, 0),
+                                               (2024, 2, 1, 0), (2026, 10, 1, 130)] {
+            defaults.set(weekday, forKey: "firstWeekday")
+            model.select(model.engine.date(year, month, 23))
+            try await Task.sleep(for: .milliseconds(150))
+            if offset > 0 {
+                let table = try calendarTimelineTable()
+                guard let scroll = table.enclosingScrollView else { throw CocoaError(.coderInvalidValue) }
+                (scroll as? CalendarTimelineScrollView)?.onActivity?()
+                scroll.contentView.scroll(to: CGPoint(x: 0, y: scroll.contentView.bounds.minY + CGFloat(offset)))
+                scroll.reflectScrolledClipView(scroll.contentView)
+                try await Task.sleep(for: .milliseconds(150))
+            }
+            for intoYear in [true, false] {
+                if intoYear { model.openYearOverview() } else { model.dismissYearLevel() }
+                try await prepared()
+                let name = "grid-\(year)-\(month)-\(offset)-\(intoYear ? "out" : "in")"
+                var samples: [[String: Double]] = []
+                for frame in 0...90 {
+                    presentation.sampleGeometry(deltaTime: frame == 0 ? 0 : 1.0 / 120)
+                    // 强制走实际绘制，受控时钟不依赖显示器回调。
+                    presentation.transitionView?.display()
+                    guard let sample = presentation.canvasSample,
+                          sample["dateCopies"] == 1, sample["dateCount"] == sample["expectedDateCount"],
+                          sample["backgroundCirclePixels"] == 0 else {
+                        fputs("日期重复绘制或快照残留红圈：\(name)，采样=\(String(describing: presentation.canvasSample))\n", stderr)
+                        throw CocoaError(.coderInvalidValue)
+                    }
+                    samples.append(sample)
+                    if [0, 12, 24, 36, 60, 90].contains(frame) {
+                        try saveViewSnapshot(presentation.view, name: name + "-\(frame)", to: directory)
+                    }
+                }
+                if !intoYear, let end = samples.last, end["endError"]! >= 0.2 {
+                    fputs("日期交接误差过大：\(name)，\(end["endError"]!)\n", stderr)
+                    throw CocoaError(.coderInvalidValue)
+                }
+                presentation.finishGeometrySampling()
+                report.append(["name": name, "frames": samples, "drawingMS": presentation.drawingMilliseconds])
+                try saveViewSnapshot(presentation.view, name: name + "-end", to: directory)
+            }
+        }
+        model.select(model.engine.date(2026, 10, 23))
+        try await Task.sleep(for: .milliseconds(150))
+        model.openYearOverview()
+        try await prepared()
+        presentation.sampleGeometry(deltaTime: 0.10)
+        var reversals: [[String: Any]] = []
+        for (name, action) in [
+            ("year-to-month", { model.dismissYearLevel() }),
+            ("month-to-year", { model.openYearOverview() }),
+            ("year-to-settings", { model.showingSettings = true }),
+            ("settings-to-year", { model.showingSettings = false }),
+            ("year-to-month-again", { model.dismissYearLevel() })
+        ] {
+            let count = presentation.retargetCount
+            action()
+            try await prepared()
+            presentation.sampleGeometry(deltaTime: 0)
+            guard presentation.retargetCount == count + 1,
+                  presentation.retargetPositionError < 0.001, presentation.retargetVelocityError < 0.001 else {
+                fputs("受控时间的画布重定向不连续：\(name)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+            reversals.append(["name": name, "positionError": presentation.retargetPositionError,
+                              "velocityError": presentation.retargetVelocityError])
+            presentation.sampleGeometry(deltaTime: 0.06)
+            try saveViewSnapshot(presentation.view, name: "grid-redirect-" + name, to: directory)
+        }
+        presentation.sampleGeometry(deltaTime: 1)
+        presentation.finishGeometrySampling()
+        presentation.reduceMotionOverride = true
+        model.openYearOverview()
+        try await prepared()
+        let reducedCard = presentation.movingCardFrame
+        presentation.sampleGeometry(deltaTime: 0.06)
+        guard presentation.canvasSample == nil, presentation.movingCardFrame == reducedCard else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        presentation.sampleGeometry(deltaTime: 0.06)
+        presentation.finishGeometrySampling()
+        try JSONSerialization.data(withJSONObject: reversals, options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("grid-retargeting.json"))
+        try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("grid-geometry.json"))
+    }
+
     private func verifyCalendarZoom(directory: URL) async throws {
         guard let model, let presentation = presentationController else { throw CocoaError(.coderInvalidValue) }
         let behavior = popover.behavior
@@ -1777,11 +1883,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         presentation.reduceMotionOverride = false
         defer { popover.behavior = behavior; presentation.reduceMotionOverride = nil }
         var report: [[String: Any]] = []
-        func sample(_ name: String, moving: Bool = true, matched: Bool = true) async throws {
+        func sample(_ name: String, moving: Bool = true, matched: Bool = true, expectedMonth: Int? = nil) async throws {
             var positions: [Double] = []
             var heights: [Double] = []
             var cardHeights: [Double] = []
             var timing: [[String: Double]] = []
+            var canvases: [[String: Double]] = []
+            var savedStages: Set<Int> = []
             guard let shell = presentation.shell else { throw CocoaError(.coderInvalidValue) }
             let material = presentation.material
             var chrome: [[String: Double]] = []
@@ -1825,6 +1933,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 try checkChrome()
                 if presentation.isTransitioning, let card = presentation.movingCardFrame, presentation.progress > 0 {
                     if let frame = presentation.movingDayFrame { positions.append(frame.midX + frame.midY) }
+                    if moving, let canvas = presentation.canvasSample {
+                        canvases.append(canvas)
+                        if let expectedMonth, canvas["focusMonth"] != Double(expectedMonth) {
+                            fputs("缩放焦点未采用点击时的优势月份：\(name)，期望=\(expectedMonth)，实际=\(canvas["focusMonth"] ?? -1)\n", stderr)
+                            throw CocoaError(.coderInvalidValue)
+                        }
+                        let scale = canvas["scale"]!
+                        let ratios = [canvas["focusWidth"]! / canvas["baseFocusWidth"]!,
+                                      canvas["focusHeight"]! / canvas["baseFocusHeight"]!,
+                                      canvas["neighborWidth"]! / canvas["baseNeighborWidth"]!,
+                                      canvas["neighborHeight"]! / canvas["baseNeighborHeight"]!]
+                        let dx = canvas["neighborX"]! - canvas["focusX"]!
+                        let dy = canvas["neighborY"]! - canvas["focusY"]!
+                        guard ratios.allSatisfy({ abs($0 - scale) < 0.001 }), canvas["vector"] == 1,
+                              canvas["dateCopies"] == 1, canvas["backgroundCirclePixels"] == 0,
+                              canvas["dateCount"] == canvas["expectedDateCount"],
+                              abs(dx - (canvas["baseNeighborX"]! - canvas["baseFocusX"]!) * scale) < 0.01,
+                              abs(dy - (canvas["baseNeighborY"]! - canvas["baseFocusY"]!) * scale) < 0.01 else {
+                            fputs("画布变换或日期单份绘制异常：\(name)，日期份数=\(canvas["dateCopies"] ?? -1)，背景红圈像素=\(canvas["backgroundCirclePixels"] ?? -1)\n", stderr)
+                            throw CocoaError(.coderInvalidValue)
+                        }
+                        for stage in [20, 60, 90] where presentation.progress >= Double(stage) / 100 && !savedStages.contains(stage) {
+                            try saveViewSnapshot(presentation.view, name: name + "-canvas-\(stage)", to: directory)
+                            savedStages.insert(stage)
+                        }
+                    }
                     heights.append(popover.contentSize.height)
                     cardHeights.append(card.height)
                     timing.append(["time": presentation.elapsedFraction, "progress": presentation.progress,
@@ -1844,11 +1978,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             try checkChrome()
             guard cardHeights.count >= 3, (!matched || positions.count >= 3), savedMiddle, !presentation.isTransitioning,
                   presentation.transitionView == nil, hostingController?.view.alphaValue == 1 else {
-                fputs("月年过渡没有连续中间帧或未清理：\(name)，采样=\(positions.count)，进度=\(presentation.progress)，活动=\(presentation.isTransitioning)，中间帧=\(savedMiddle)，透明度=\(hostingController?.view.alphaValue ?? -1)，尺寸=\(popover.contentSize)\n", stderr)
+                fputs("月年过渡没有连续中间帧或未清理：\(name)，采样=\(positions.count)，进度=\(presentation.progress)，活动=\(presentation.isTransitioning)，中间帧=\(savedMiddle)，准备=\(presentation.preparationPhases)，驱动=\(presentation.hasActiveFrameDriver)，回调=\(presentation.driverCallbackCount)，屏幕=\(String(describing: presentation.view.window?.screen))，透明度=\(hostingController?.view.alphaValue ?? -1)，尺寸=\(popover.contentSize)\n", stderr)
                 throw CocoaError(.coderInvalidValue)
             }
             if moving {
                 try validatePresentationTiming(timing, name: name)
+                let scales = canvases.compactMap { $0["scale"] }
+                guard scales.count >= 3, (scales.max() ?? 0) - (scales.min() ?? 0) > 0.5,
+                      canvases.contains(where: { $0["detail"]! > 0 && $0["detail"]! < 1 }),
+                      model.showingYearOverview ? canvases.last!["detail"]! < 0.05 : canvases.last!["detail"]! > 0.95 else {
+                    fputs("整张画布缺少缩放或月份详情交接：\(name)，比例=\(scales)，详情=\(canvases.compactMap { $0["detail"] })\n", stderr)
+                    throw CocoaError(.coderInvalidValue)
+                }
+                if !model.showingYearOverview {
+                    // 异步轮询可能漏掉最后一次刷新，交接误差在移除动画层的边界测量。
+                    guard let end = canvases.last, end["layout"]! > 0.99,
+                          let error = presentation.handoffDateError, error < 0.2 else {
+                        fputs("日期网格交接到月视图时仍有位置误差：\(name)，交接误差=\(String(describing: presentation.handoffDateError))，末次采样=\(String(describing: canvases.last))\n", stderr)
+                        throw CocoaError(.coderInvalidValue)
+                    }
+                }
                 guard let low = positions.min(), let high = positions.max(), high - low > 5 else {
                     fputs("月年过渡的日期没有移动：\(name)，位置=\(positions)，时序=\(timing)\n", stderr)
                     throw CocoaError(.coderInvalidValue)
@@ -1878,7 +2027,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 throw CocoaError(.coderInvalidValue)
             }
             report.append(["name": name, "positions": positions, "heights": heights,
-                           "cardHeights": cardHeights, "timing": timing, "chrome": chrome,
+                           "cardHeights": cardHeights, "timing": timing, "chrome": chrome, "canvas": canvases,
+                           "handoffDateError": presentation.handoffDateError as Any? ?? NSNull(),
                            "displayTimestamps": timestamps,
                            "preparationMS": presentation.preparationMilliseconds,
                            "preparationPhases": presentation.preparationPhases,
@@ -1889,6 +2039,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             try saveViewSnapshot(presentation.view, name: name + "-end", to: directory)
         }
         for (year, month, day, weekday) in [(2026, 10, 24, 1), (2026, 3, 24, 2),
+                                           (2021, 2, 14, 2), (2024, 2, 29, 1),
                                            (1901, 1, 1, 1), (2100, 12, 31, 2)] {
             defaults.set(weekday, forKey: "firstWeekday")
             model.select(model.engine.date(year, month, day))
@@ -1912,31 +2063,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             try await sample("zoom-\(year)-\(month)-in")
             guard model.selection == selection, !model.showingYearOverview else { throw CocoaError(.coderInvalidValue) }
         }
+        for (name, year, month, weekday, bias, expected) in [
+            ("previous-more", 2026, 10, 1, -1.0, 202610),
+            ("equal-next", 2026, 10, 1, 0.0, 202611),
+            ("next-more", 2026, 10, 1, 1.0, 202611),
+            ("last-week", 2026, 10, 1, 63.0, 202611),
+            ("cross-year", 2026, 12, 1, 63.0, 202701),
+            ("four-weeks-equal", 2021, 2, 1, 0.0, 202103),
+            ("leap-year", 2024, 2, 2, 63.0, 202403)
+        ] {
+            defaults.set(weekday, forKey: "firstWeekday")
+            model.select(model.engine.date(year, month, 24))
+            try await Task.sleep(for: .milliseconds(400))
+            try await waitForCalendarTransition()
+            let selection = model.selection
+            let table = try calendarTimelineTable()
+            guard let scroll = table.enclosingScrollView else { throw CocoaError(.coderInvalidValue) }
+            let timeline = model.calendarTimeline(firstWeekday: weekday)
+            let nextMonth = model.engine.addingMonths(1, to: model.month)
+            let boundary = table.rect(ofRow: timeline.weekRow(containing: nextMonth) - 1).minY
+            (scroll as? CalendarTimelineScrollView)?.onActivity?()
+            let position = boundary - table.visibleRect.height / 2 + bias
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: position))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            // 不等待滚动通知：焦点与返回位置必须在点击这一刻读取实际视口。
+            model.openYearOverview()
+            let expectedDate = model.engine.date(expected / 100, expected % 100, 1)
+            guard model.overviewFocusMonth == expectedDate,
+                  model.overviewTarget == expected / 100 * 100 + ((expected % 100 - 1) / 2 * 2 + 1),
+                  model.selection == selection, let viewport = model.calendarViewport else {
+                fputs("跨月焦点或年概览定位错误：\(name)，期望=\(expected)，实际=\(String(describing: model.overviewFocusMonth))\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+            try await sample("zoom-focus-" + name + "-out", expectedMonth: expected)
+            model.dismissYearLevel()
+            try await sample("zoom-focus-" + name + "-return", expectedMonth: expected)
+            let restored = try calendarTimelineTable()
+            let restoredRow = timeline.weekRow(containing: viewport.date, inMonth: viewport.month)
+            guard abs(restored.visibleRect.minY - restored.rect(ofRow: restoredRow).minY - viewport.offset) < 1,
+                  model.selection == selection else {
+                fputs("跨月缩放未恢复原可见周及其偏移：\(name)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+            if name == "last-week" {
+                model.openYearOverview()
+                try await sample("zoom-focus-reopen-out", expectedMonth: expected)
+                let overview = try overviewTable()
+                let targetMonth = 12
+                let row = (year - CalendarEngine.years.lowerBound) * 7 + 1 + (targetMonth - 1) / 2
+                guard let pair = overview.view(atColumn: 0, row: row, makeIfNecessary: false),
+                      let button = pair.subviews.compactMap({ $0 as? NSButton }).first(where: { $0.title == "\(year)年\(targetMonth)月" }),
+                      button.accessibilityPerformPress() else { throw CocoaError(.coderInvalidValue) }
+                try await sample("zoom-focus-explicit-month-in", expectedMonth: year * 100 + targetMonth)
+                guard model.overviewFocusMonth == nil, model.calendarSnappedMonth == model.month else {
+                    throw CocoaError(.coderInvalidValue)
+                }
+            }
+        }
+        defaults.set(1, forKey: "firstWeekday")
         model.select(model.engine.date(2026, 10, 24))
         try await Task.sleep(for: .milliseconds(400))
         try await waitForCalendarTransition()
         let selection = model.selection
-        // 跨月自由停留仅让可见的当前月份日期参与，不改动原滚动位置。
-        let table = try calendarTimelineTable()
-        guard let scroll = table.enclosingScrollView else { throw CocoaError(.coderInvalidValue) }
-        (scroll as? CalendarTimelineScrollView)?.onActivity?()
-        let position = scroll.contentView.bounds.minY + 130
-        scroll.contentView.scroll(to: NSPoint(x: 0, y: position))
-        scroll.reflectScrolledClipView(scroll.contentView)
-        try await Task.sleep(for: .milliseconds(200))
-        guard let viewport = model.calendarViewport else { throw CocoaError(.coderInvalidValue) }
-        model.openYearOverview()
-        try await sample("zoom-partial-month")
-        model.dismissYearLevel()
-        try await sample("zoom-return-position")
-        let restored = try calendarTimelineTable()
-        let timeline = CalendarTimeline(engine: model.engine, firstWeekday: defaults.integer(forKey: "firstWeekday"))
-        let restoredRow = timeline.weekRow(containing: viewport.date, inMonth: viewport.month)
-        guard abs(restored.visibleRect.minY - restored.rect(ofRow: restoredRow).minY - viewport.offset) < 1,
-              model.selection == selection else {
-            fputs("月年过渡未恢复原可见周及其偏移\n", stderr)
-            throw CocoaError(.coderInvalidValue)
-        }
         for interruption in ["preparation", "reverse", "settings", "close"] {
             model.openYearOverview()
             if interruption != "preparation" { try await Task.sleep(for: .milliseconds(60)) }
@@ -2078,6 +2266,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
               frames.allSatisfy({ abs($0["outgoing"]! + $0["incoming"]! - 1) < 0.001 && $0["chromeCoverage"]! >= 0.999 }),
               frames.contains(where: { $0["seconds"]! >= 0.2 && $0["progress"]! < 0.99 }) else {
             fputs("动画起步过急、正文淡化不连续或缺少自然收尾：\(name)\n", stderr)
+            if let data = try? JSONSerialization.data(withJSONObject: frames, options: [.sortedKeys]),
+               let samples = String(data: data, encoding: .utf8) {
+                fputs("动画时序采样：\(samples)\n", stderr)
+            }
             throw CocoaError(.coderInvalidValue)
         }
     }
