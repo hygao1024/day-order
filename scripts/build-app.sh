@@ -12,7 +12,7 @@ app_path="$PWD/build/DayOrder.app"
 mkdir -p "$app_path/Contents/MacOS" "$app_path/Contents/Resources"
 cp "$bin_path/DayOrder" "$app_path/Contents/MacOS/DayOrder"
 ditto "$bin_path/DayOrder_DayOrderCore.bundle" "$app_path/Contents/Resources/DayOrder_DayOrderCore.bundle"
-swift scripts/generate-icon.swift "$PWD/build/AppIcon.iconset"
+swift scripts/generate-icon.swift "$PWD/Assets/AppIcon.png" "$PWD/build/AppIcon.iconset"
 iconutil -c icns "$PWD/build/AppIcon.iconset" -o "$app_path/Contents/Resources/AppIcon.icns"
 cat > "$app_path/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -24,8 +24,8 @@ cat > "$app_path/Contents/Info.plist" <<'PLIST'
   <key>CFBundleDisplayName</key><string>日序</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleShortVersionString</key><string>1.0.0-alpha.02</string>
+  <key>CFBundleVersion</key><string>2</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
