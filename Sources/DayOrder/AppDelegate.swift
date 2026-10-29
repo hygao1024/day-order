@@ -244,10 +244,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 return
             }
             if ProcessInfo.processInfo.arguments.contains("--month-snap-smoke") {
-                try await verifyMonthSnapping(directory: directory)
                 defaults.set(1, forKey: "firstWeekday")
-                model.today = model.engine.date(2026, 10, 24)
-                model.select(model.today)
+                model.today = model.engine.date(2026, 10, 29)
+                model.select(model.engine.date(2026, 10, 27))
                 for blur in [false, true] {
                     defaults.set(blur, forKey: "blurEnabled")
                     for appearance in ["light", "dark"] {
@@ -255,6 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                         try await saveSnapshot("rounded-\(blur ? "blur" : "solid")-\(appearance)", to: directory)
                     }
                 }
+                try await verifyMonthSnapping(directory: directory)
                 try "月初吸附、惯性等待、中途取消、四至六周完整显示、返回恢复与边界验证通过。\n"
                     .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
                 NSApp.terminate(nil)

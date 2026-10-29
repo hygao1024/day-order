@@ -516,13 +516,7 @@ private final class CalendarDayButton: NSButton, CalendarZoomParticipant {
         let muted = NSColor.labelColor.withAlphaComponent(0.18)
         if (selected && !highlightedToday) || isHighlighted {
             NSColor.labelColor.withAlphaComponent(isHighlighted ? 0.09 : 0.06).setFill()
-            let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
-            path.fill()
-            if selected && !highlightedToday {
-                NSColor.labelColor.withAlphaComponent(0.12).setStroke()
-                path.lineWidth = 1
-                path.stroke()
-            }
+            feedbackPath.fill()
         }
         let circle = dayNumberFrame
         if !zoomHiddenDays.contains(day.day) {
@@ -558,6 +552,11 @@ private final class CalendarDayButton: NSButton, CalendarZoomParticipant {
 
     private var dayNumberFrame: NSRect { NSRect(x: bounds.midX - 13, y: 3, width: 26, height: 26) }
 
+    private var feedbackPath: NSBezierPath {
+        NSBezierPath(cgPath: RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .path(in: bounds.insetBy(dx: 0.5, dy: 0.5)).cgPath)
+    }
+
     private func drawText(_ value: String, rect: NSRect, font: NSFont, color: NSColor) {
         let text = NSAttributedString(string: value, attributes: [.font: font, .foregroundColor: color])
         let size = text.size()
@@ -565,5 +564,5 @@ private final class CalendarDayButton: NSButton, CalendarZoomParticipant {
     }
     override func viewDidChangeEffectiveAppearance() { needsDisplay = true }
     override var focusRingMaskBounds: NSRect { bounds }
-    override func drawFocusRingMask() { NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4).fill() }
+    override func drawFocusRingMask() { feedbackPath.fill() }
 }

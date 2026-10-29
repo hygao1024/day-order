@@ -143,7 +143,7 @@ python3 scripts/run-smoke.py "$PWD/build/calendar-grid-smoke" --calendar-grid-sm
 python3 scripts/run-smoke.py "$PWD/build/month-snap-smoke" --month-snap-smoke
 ```
 
-该检查生成截图、`result.txt` 和 `snap-motion.json`，另生成 `rounded-{solid,blur}-{light,dark}.png` 检查月视图圆角在毛玻璃开关及深浅色切换后的外观。过渡采样检查四至六周月份行高不变、可见周视图保持复用、位移逐步趋近目标，以及解除吸附不跳动；采样间隔不等于显示帧率，物理触控板的手感仍需人工体验。
+该检查生成截图、`result.txt` 和 `snap-motion.json`，另生成 `rounded-{solid,blur}-{light,dark}.png`，固定今天为 2026 年 10 月 29 日并选中 27 日，检查月视图及日期选中态的圆角在毛玻璃开关及深浅色切换后的外观。选中日期使用无描边的浅灰连续圆角底，今天保留红色圆形标记。过渡采样检查四至六周月份行高不变、可见周视图保持复用、位移逐步趋近目标，以及解除吸附不跳动；采样间隔不等于显示帧率，物理触控板的手感仍需人工体验。
 
 月份箭头的非线性切换使用真实按钮回归：
 
