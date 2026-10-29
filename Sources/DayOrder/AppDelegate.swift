@@ -1324,6 +1324,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 }
             } else {
                 try validatePresentationTiming(frames, name: name)
+                let settling = frames.filter { $0["seconds"]! >= 0.22 && $0["seconds"]! <= 0.28 }
+                guard !settling.isEmpty, settling.allSatisfy({ $0["progress"]! >= 0.95 }),
+                      frames.allSatisfy({ $0["seconds"]! <= 0.45 }) else {
+                    fputs("设置过渡未及时接近终点或收尾过长：\(name)，末帧时间=\(frames.last?["seconds"] ?? 0)\n", stderr)
+                    throw CocoaError(.coderInvalidValue)
+                }
                 guard Set(frames.map { Int($0["height"]! * 2) }).count >= 3,
                       abs(sourceCard.height - destination.height) > 10 else {
                     fputs("设置白色容器未按弹簧曲线连续形变：\(name)\n", stderr)

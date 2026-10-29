@@ -358,7 +358,7 @@ final class CalendarPresentationController: NSViewController {
             #if DEBUG
             reduced = reduceMotionOverride ?? reduced
             #endif
-            guard layer.retarget(destination, duration: transition.zoomsDates ? 0.4 : 0.35,
+            guard layer.retarget(destination, duration: transition.zoomsDates ? 0.4 : 0.22,
                                  reduceMotion: reduced, zoomsDates: transition.zoomsDates) else {
                 cancelTransition()
                 return
