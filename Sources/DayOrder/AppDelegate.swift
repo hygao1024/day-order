@@ -1046,13 +1046,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let scroll = table.enclosingScrollView as? CalendarTimelineScrollView else { throw CocoaError(.coderInvalidValue) }
         let timeline = CalendarTimeline(engine: model.engine, firstWeekday: 1)
         let selection = model.selection
-        func wheel(_ delta: Int32 = 0, phase: Int64 = 0, momentum: Int64 = 0) throws {
+        func wheel(_ delta: Int32 = 0, phase: Int64 = 0, momentum: Int64 = 0,
+                   in target: CalendarTimelineScrollView? = nil) throws {
             guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
                                    wheel1: delta, wheel2: 0, wheel3: 0) else { throw CocoaError(.coderInvalidValue) }
             cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
             cg.setIntegerValueField(.scrollWheelEventMomentumPhase, value: momentum)
             guard let event = NSEvent(cgEvent: cg) else { throw CocoaError(.coderInvalidValue) }
-            scroll.scrollWheel(with: event)
+            (target ?? scroll).scrollWheel(with: event)
         }
         func position(_ date: Date, offset: CGFloat) {
             let row = timeline.weekRow(containing: date)
@@ -1076,6 +1077,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 fputs("整月吸附布局不完整：\(month)，visible=\(table.visibleRect)，rows=\(top)...\(bottom)，state=\(String(describing: model.calendarSnappedMonth))\n", stderr)
                 throw CocoaError(.coderInvalidValue)
             }
+        }
+        func verifySnapRange(_ date: Date, weekdays: Int, in table: NSTableView) async throws {
+            guard let scroll = table.enclosingScrollView as? CalendarTimelineScrollView else {
+                throw CocoaError(.coderInvalidValue)
+            }
+            let layout = CalendarTimeline(engine: model.engine, firstWeekday: weekdays)
+            let first = layout.weekRow(containing: date)
+            let firstRect = table.rect(ofRow: first)
+            let secondRect = table.rect(ofRow: first + 1)
+            let thirdRect = table.rect(ofRow: first + 2)
+            let offsets: [(String, CGFloat, Bool)] = [
+                ("月初前范围外", -45, false), ("月初前边界", -44, true),
+                ("月份标题", -15, true), ("第一行中部", firstRect.height / 2, true),
+                ("第二行起点", secondRect.minY - firstRect.minY, true),
+                ("第二行中部", secondRect.midY - firstRect.minY, true),
+                ("第二行末尾", thirdRect.minY - firstRect.minY - 0.5, true),
+                ("第三行起点", thirdRect.minY - firstRect.minY, false),
+                ("第三行中部", thirdRect.midY - firstRect.minY, false)
+            ]
+            let selected = model.selection
+            for (name, offset, shouldSnap) in offsets {
+                try wheel(phase: 1, in: scroll)
+                let point = table.convert(NSPoint(x: 0, y: table.rect(ofRow: first).minY + offset), to: scroll.contentView)
+                scroll.contentView.scroll(to: point)
+                scroll.reflectScrolledClipView(scroll.contentView)
+                try wheel(phase: 4, in: scroll)
+                try await Task.sleep(for: .milliseconds(550))
+                let actual = table.visibleRect.minY - table.rect(ofRow: first).minY
+                guard model.selection == selected,
+                      shouldSnap ? model.calendarSnappedMonth == date && abs(actual) < 1
+                          : model.calendarSnappedMonth == nil && abs(actual - offset) < 0.1 else {
+                    fputs("前两行吸附范围错误：\(date)，星期起始=\(weekdays)，\(name)，偏移=\(offset) → \(actual)，应吸附=\(shouldSnap)\n", stderr)
+                    throw CocoaError(.coderInvalidValue)
+                }
+                if shouldSnap { try assertFullMonth(date, weekdays: weekdays, in: table) }
+            }
+        }
+        for (year, month) in [(2026, 2), (2026, 12), (2026, 8), (2027, 1)] {
+            try await verifySnapRange(model.engine.date(year, month, 1), weekdays: 1, in: table)
         }
         var motionReports: [[String: Any]] = []
         // 观察整个过渡，防止最终位置正确却在首帧改变行高、隐藏标题或重建周视图。
@@ -1229,6 +1269,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.select(model.engine.date(2026, 3, 1))
         try await Task.sleep(for: .milliseconds(300))
         try await waitForCalendarTransition()
+        for (year, month) in [(2021, 2), (2026, 12), (2026, 3)] {
+            try await verifySnapRange(model.engine.date(year, month, 1), weekdays: 2, in: try calendarTimelineTable())
+        }
+        model.select(model.engine.date(2026, 3, 1))
+        try await Task.sleep(for: .milliseconds(300))
         try assertFullMonth(model.month, weekdays: 2, in: try calendarTimelineTable())
         try await saveSnapshot("snap-six-weeks-monday-dark", to: directory)
         model.showingSettings = true

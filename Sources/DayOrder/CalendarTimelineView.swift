@@ -328,14 +328,18 @@ struct CalendarTimelineView: NSViewRepresentable {
         private func nearbyMonth() -> MonthSnap? {
             guard let table else { return nil }
             let top = table.visibleRect.minY
-            let range = table.rows(in: NSRect(x: 0, y: max(0, top - 100), width: table.bounds.width, height: 200))
-            var nearest: (distance: CGFloat, date: Date)?
-            for row in range.location..<NSMaxRange(range) where timeline.rows.indices.contains(row) {
-                guard case .month(let date) = timeline.rows[row] else { continue }
-                let distance = abs(table.rect(ofRow: timeline.weekRow(containing: date)).minY - top)
-                if distance <= 44 && distance < (nearest?.distance ?? .infinity) { nearest = (distance, date) }
-            }
-            return nearest.flatMap { monthLayout(for: $0.date) }
+            let row = table.row(at: NSPoint(x: 1, y: top))
+            guard timeline.rows.indices.contains(row),
+                  let current = monthLayout(for: timeline.rows[row].sectionMonth) else { return nil }
+            // 月标题和前两周属于同一吸附区间，第三周起点不包含在内。
+            if row < current.weeks.lowerBound + 2 { return current }
+
+            // 尚未进入下个月时，保留月初接近顶部的吸附距离。
+            let nextRow = current.weeks.upperBound
+            guard timeline.rows.indices.contains(nextRow),
+                  let next = monthLayout(for: timeline.rows[nextRow].sectionMonth),
+                  table.rect(ofRow: next.weeks.lowerBound).minY - top <= 44 else { return nil }
+            return next
         }
 
         @objc func scrolled() {
