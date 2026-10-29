@@ -2220,6 +2220,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             if moving {
                 try validatePresentationTiming(timing, name: name)
+                let settling = timing.filter { $0["seconds"]! >= 0.30 && $0["seconds"]! <= 0.36 }
+                guard !settling.isEmpty, settling.allSatisfy({ $0["progress"]! >= 0.98 }),
+                      timing.allSatisfy({ $0["seconds"]! <= 0.60 }) else {
+                    fputs("月年过渡未及时接近终点或收尾过长：\(name)，末帧时间=\(timing.last?["seconds"] ?? 0)\n", stderr)
+                    throw CocoaError(.coderInvalidValue)
+                }
                 let scales = canvases.compactMap { $0["scale"] }
                 guard scales.count >= 3, (scales.max() ?? 0) - (scales.min() ?? 0) > 0.5,
                       canvases.contains(where: { $0["detail"]! > 0 && $0["detail"]! < 1 }),

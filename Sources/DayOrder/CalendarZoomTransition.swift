@@ -358,7 +358,7 @@ final class CalendarPresentationController: NSViewController {
             #if DEBUG
             reduced = reduceMotionOverride ?? reduced
             #endif
-            guard layer.retarget(destination, duration: transition.zoomsDates ? 0.4 : 0.22,
+            guard layer.retarget(destination, duration: transition.zoomsDates ? 0.3 : 0.22,
                                  reduceMotion: reduced, zoomsDates: transition.zoomsDates) else {
                 cancelTransition()
                 return
@@ -699,8 +699,8 @@ private final class CalendarZoomOverlay: NSView {
     private var targetCanvasOpacity: CGFloat = 0
     private var card: CalendarSpringValue<CGRect>
     private var windowHeight: CalendarSpringValue<CGFloat>
-    private var spring = Spring(duration: 0.4, bounce: 0)
-    private(set) var duration = 0.4
+    private var spring = Spring(duration: 0.3, bounce: 0)
+    private(set) var duration = 0.3
     private(set) var elapsed = 0.0
     private(set) var matchedDayCount = 0
     private(set) var reducedMotion = false
