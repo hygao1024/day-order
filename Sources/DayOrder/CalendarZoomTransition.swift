@@ -138,6 +138,10 @@ final class CalendarHostingController: NSHostingController<AnyView> {
 // 展示层拥有短暂的快照、尺寸插值与取消；不写日期选择或滚动位置。
 @MainActor
 final class CalendarPresentationController: NSViewController {
+    var contentSizeChanged: ((NSSize) -> Void)?
+    override var preferredContentSize: NSSize {
+        didSet { contentSizeChanged?(preferredContentSize) }
+    }
     let host: CalendarHostingController
     private let model: CalendarModel
     private let defaults: UserDefaults

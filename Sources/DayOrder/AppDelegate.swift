@@ -3,10 +3,10 @@ import DayOrderCore
 import SwiftUI
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate {
     private var defaults = UserDefaults.standard
     private var statusItem: NSStatusItem?
-    private let popover = NSPopover()
+    private let panel = CalendarPanel()
     private var model: CalendarModel?
     private var refreshTimer: Timer?
     private var keyboardMonitor: Any?
@@ -24,8 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let model = CalendarModel(engine: try CalendarEngine(), holidayCacheDirectory: holidayCacheDirectory)
             self.model = model
             let view = CalendarView(model: model, updateMenuBar: { [weak self] in self?.refresh() },
-                                    updatePopoverAppearance: { [weak self] in self?.popover.appearance = $0 }) {
-                [weak self] in self?.popover.performClose(nil)
+                                    updatePanelAppearance: { [weak self] in self?.panel.appearance = $0 }) {
+                [weak self] in self?.panel.performClose(nil)
             }
             var root = AnyView(view)
             #if DEBUG
@@ -44,15 +44,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             hostingController = host
             let presentation = CalendarPresentationController(host: host, model: model, defaults: defaults)
             presentationController = presentation
-            popover.contentViewController = presentation
-            popover.behavior = .transient
-            popover.animates = false
-            popover.delegate = self
+            panel.contentViewController = presentation
+            panel.behavior = .transient
+            panel.onShow = { [weak self] in self?.panelDidShow() }
+            panel.onClose = { [weak self] in self?.panelDidClose() }
+            presentation.contentSizeChanged = { [weak self] size in self?.panel.resizeContent(to: size) }
 
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
             statusItem = item
             item.button?.target = self
-            item.button?.action = #selector(togglePopover)
+            item.button?.action = #selector(togglePanel)
             item.button?.setAccessibilityLabel("日序日历")
             refresh()
 
@@ -94,35 +95,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         button.setAccessibilityLabel("日序日历，" + fullDate)
     }
 
-    @objc private func togglePopover() {
-        if popover.isShown {
-            popover.performClose(nil)
+    @objc private func togglePanel() {
+        if panel.isShown {
+            panel.performClose(nil)
         } else {
-            showPopover()
+            showPanel()
         }
     }
 
-    private func showPopover() {
+    private func showPanel() {
         guard let button = statusItem?.button else { return }
         refresh()
         model?.showingSettings = false
         model?.yearDraft = ""
         model?.goToToday()
         NSApp.activate(ignoringOtherApps: true)
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        popover.contentViewController?.view.window?.makeKey()
+        panel.show(anchoredTo: button)
+        panel.contentViewController?.view.window?.makeKey()
     }
 
-    func popoverDidShow(_ notification: Notification) {
+    private func panelDidShow() {
         guard keyboardMonitor == nil else { return }
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             let handled = MainActor.assumeIsolated {
-                guard let self, self.popover.isShown, let model = self.model,
-                      event.window == self.popover.contentViewController?.view.window else { return false }
+                guard let self, self.panel.isShown, let model = self.model,
+                      event.window == self.panel.contentViewController?.view.window else { return false }
                 if event.keyCode == 53 {
                     if model.showingSettings { model.showingSettings = false }
                     else if model.showingYearOverview { model.dismissYearLevel() }
-                    else { self.popover.performClose(nil) }
+                    else { self.panel.performClose(nil) }
                     return true
                 }
                 guard !model.showingSettings, !model.showingYearOverview,
@@ -143,7 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    func popoverDidClose(_ notification: Notification) {
+    private func panelDidClose() {
         presentationController?.cancelTransition()
         removeKeyboardMonitor()
     }
@@ -156,6 +157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        panel.close()
         presentationController?.cancelTransition()
         model?.cancelHolidayUpdate()
         refreshTimer?.invalidate()
@@ -183,12 +185,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             model.today = model.engine.date(2026, 10, 23)
             model.select(model.today)
             defaults.set("light", forKey: "appearance")
-            showPopover()
+            showPanel()
             // 合成输入阶段不能因自动化宿主抢焦点而关闭弹窗。
-            popover.behavior = .applicationDefined
-            // showPopover 会刷新真实日期；快照随后固定时钟，使用同一生产视图。
+            panel.behavior = .applicationDefined
+            // showPanel 会刷新真实日期；快照随后固定时钟，使用同一生产视图。
             model.today = model.engine.date(2026, 10, 23)
             model.select(model.today)
+            if ProcessInfo.processInfo.arguments.contains("--panel-position-smoke") {
+                try await verifyPanelPosition(directory: directory)
+                try "面板切月、日期详情与月年过渡的顶部定位验证通过。\n"
+                    .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+                return
+            }
+            if ProcessInfo.processInfo.arguments.contains("--panel-smoke") {
+                try await verifyPanel(directory: directory)
+                try "无箭头面板、尺寸锚定、内外点击、Esc、重复开关与关闭清理验证通过。\n"
+                    .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.arguments.contains("--settings-transition-smoke") {
                 try await verifySettingsTransition(directory: directory)
                 try "设置过渡的容器形变、固定弹窗高度、常驻上下栏与背景、取消和减少动态效果验证通过。\n"
@@ -260,6 +276,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 NSApp.terminate(nil)
                 return
             }
+            try await verifyPanel(directory: directory)
+            model.today = model.engine.date(2026, 10, 23)
+            model.select(model.today)
             try await saveSnapshot("light-october", to: directory)
             defaults.set(1, forKey: "firstWeekday")
             model.today = model.engine.date(2026, 10, 24)
@@ -335,7 +354,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             try await Task.sleep(for: .milliseconds(400))
             try await waitForCalendarTransition()
             // 无合成输入的偏好与材质回归使用生产弹窗行为，覆盖临时窗口的开关更新。
-            popover.behavior = .transient
+            panel.behavior = .transient
             try await verifyMenuBar(directory: directory, defaults: defaults, domain: domain)
             try await verifyHolidays(directory: directory)
             if ProcessInfo.processInfo.arguments.contains("--holiday-network-smoke") {
@@ -370,8 +389,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             try await saveSnapshot("blur-on-year-light", to: directory)
             model.showingYearOverview = false
             try await saveSnapshot("blur-on-restored-light", to: directory)
-            popover.performClose(nil)
-            guard !popover.isShown, keyboardMonitor == nil else { throw CocoaError(.coderInvalidValue) }
+            panel.performClose(nil)
+            guard !panel.isShown, keyboardMonitor == nil else { throw CocoaError(.coderInvalidValue) }
             try "真实状态栏弹窗、连续周滚动与跨月选择、滚动位置恢复、辅助功能动作、外观与节日快照、年概览导航、日期边界、关闭清理通过。\n"
                 .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
             NSApp.terminate(nil)
@@ -381,11 +400,137 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
+    private func verifyPanelPosition(directory: URL) async throws {
+        guard let model, let button = statusItem?.button else { throw CocoaError(.coderInvalidValue) }
+        let behavior = panel.behavior
+        let selection = model.selection
+        panel.behavior = .applicationDefined
+        defer { panel.behavior = behavior; model.select(selection) }
+        var samples: [[String: Any]] = []
+        var heights: [CGFloat] = []
+        func sample(_ name: String, duration: Double = 0.7) async throws {
+            let start = ProcessInfo.processInfo.systemUptime
+            var failure: (actual: CGFloat, expected: CGFloat)?
+            repeat {
+                try await Task.sleep(for: .milliseconds(8))
+                guard let statusWindow = button.window else { throw CocoaError(.coderInvalidValue) }
+                let anchor = statusWindow.convertToScreen(button.convert(button.bounds, to: nil))
+                let expectedTop = min(anchor.minY, statusWindow.screen?.visibleFrame.maxY ?? anchor.minY) - 6
+                let frame = panel.frame
+                heights.append(frame.height)
+                if abs(frame.maxY - expectedTop) > 1, failure == nil {
+                    failure = (frame.maxY, expectedTop)
+                }
+                samples.append(["scenario": name, "seconds": ProcessInfo.processInfo.systemUptime - start,
+                                "top": frame.maxY, "expectedTop": expectedTop, "height": frame.height])
+            } while ProcessInfo.processInfo.systemUptime - start < duration
+            try JSONSerialization.data(withJSONObject: samples, options: [.prettyPrinted, .sortedKeys])
+                .write(to: directory.appendingPathComponent("panel-position.json"))
+            if let failure {
+                try await saveSnapshot("panel-position-failure", to: directory)
+                fputs("面板顶部偏离图标：\(name)，实际=\(failure.actual)，预期=\(failure.expected)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+        }
+        try await saveSnapshot("panel-position-initial", to: directory)
+        try await sample("initial")
+        for (month, day) in [(6, 8), (10, 23), (10, 22), (4, 5), (6, 8)] {
+            model.select(model.engine.date(2026, month, day))
+            try await sample("select-\(month)-\(day)")
+        }
+        for amount in [-1, -1, 1, 1, 1, -1] {
+            model.moveMonth(amount, animated: true)
+            try await sample("navigate-\(amount)")
+        }
+        model.openYearOverview()
+        try await sample("year-out")
+        try await clickOverviewMonth(year: 2026, month: 6)
+        try await sample("year-to-june")
+        guard (heights.max() ?? 0) - (heights.min() ?? 0) > 40 else {
+            fputs("面板位置检查未覆盖实际高度变化。\n", stderr)
+            throw CocoaError(.coderInvalidValue)
+        }
+        try await saveSnapshot("panel-position-june", to: directory)
+    }
+
+    private func verifyPanel(directory: URL) async throws {
+        guard let presentation = presentationController, let button = statusItem?.button,
+              let statusWindow = button.window else { throw CocoaError(.coderInvalidValue) }
+        let behavior = panel.behavior
+        defer { panel.behavior = behavior }
+        func check(_ condition: Bool, _ message: String) throws {
+            guard condition else {
+                fputs("面板验证失败：\(message)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+        }
+        func click(_ window: NSWindow, at point: NSPoint) async throws {
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                guard let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                    context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else {
+                    throw CocoaError(.coderInvalidValue)
+                }
+                NSApp.postEvent(event, atStart: false)
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        try await saveSnapshot("panel-light", to: directory)
+        try check(panel.isKeyWindow && panel.styleMask == .borderless, "应为可输入的无边框面板")
+        try check(panel.contentSize == presentation.view.bounds.size, "外框不应包含箭头或标题栏区域")
+        let top = panel.frame.maxY
+        model?.openYearOverview()
+        try await saveSnapshot("panel-year", to: directory)
+        try check(abs(panel.frame.maxY - top) < 1, "切换年概览时顶部应保持锚定")
+        model?.showingYearOverview = false
+        defaults.set("dark", forKey: "appearance")
+        try await saveSnapshot("panel-dark", to: directory)
+        defaults.set("light", forKey: "appearance")
+        try await saveSnapshot("panel-restored", to: directory)
+        panel.behavior = .transient
+        try await click(panel, at: NSPoint(x: 2, y: 2))
+        try check(panel.isShown, "点击面板内部不应关闭")
+        try await click(statusWindow, at: button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil))
+        try check(!panel.isShown && keyboardMonitor == nil && !panel.hasDismissalMonitors, "再次点击图标应关闭且清理监控")
+        for _ in 0..<3 {
+            button.performClick(nil)
+            try check(panel.isShown && panel.hasDismissalMonitors && keyboardMonitor != nil, "图标应重新打开面板")
+            panel.close()
+            panel.close()
+            try check(!panel.hasDismissalMonitors && keyboardMonitor == nil, "重复关闭必须保持清理完成")
+        }
+        showPanel()
+        try await Task.sleep(for: .milliseconds(100))
+        guard let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber,
+            context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
+            isARepeat: false, keyCode: 53) else { throw CocoaError(.coderInvalidValue) }
+        NSApp.postEvent(escape, atStart: false)
+        try await Task.sleep(for: .milliseconds(100))
+        try check(!panel.isShown && !panel.hasDismissalMonitors, "Esc 应关闭月历并清理")
+        showPanel()
+        let outside = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 20, height: 20),
+                               styleMask: .borderless, backing: .buffered, defer: false)
+        outside.isReleasedWhenClosed = false
+        defer { outside.close() }
+        try await click(outside, at: NSPoint(x: 10, y: 10))
+        try check(!panel.isShown && keyboardMonitor == nil, "点击其他窗口应关闭面板")
+        showPanel()
+        NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: NSApp)
+        try check(!panel.isShown && !panel.hasDismissalMonitors, "切换应用应关闭并清理")
+        showPanel()
+        NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        try check(!panel.isShown && !panel.hasDismissalMonitors, "屏幕布局变化应关闭并清理")
+        panel.behavior = .applicationDefined
+        showPanel()
+        try await verifyPanelPosition(directory: directory)
+    }
+
     private func verifyReopen(directory: URL, domain: String) async throws {
         guard let model else { throw CocoaError(.coderInvalidValue) }
-        let behavior = popover.behavior
-        popover.behavior = .applicationDefined
-        defer { popover.behavior = behavior }
+        let behavior = panel.behavior
+        panel.behavior = .applicationDefined
+        defer { panel.behavior = behavior }
         let preferences = NSDictionary(dictionary: defaults.persistentDomain(forName: domain) ?? [:])
         for screen in ["month", "settings", "year-overview"] {
             model.select(model.engine.date(2048, 12, 23))
@@ -395,10 +540,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 model.yearDraft = "无效年份"
             }
             model.today = model.engine.addingDays(-1, to: model.engine.today())
-            popover.performClose(nil)
-            togglePopover()
+            panel.performClose(nil)
+            togglePanel()
             let today = model.engine.today()
-            guard popover.isShown, !model.showingSettings, !model.showingYearOverview,
+            guard panel.isShown, !model.showingSettings, !model.showingYearOverview,
                   model.yearDraft.isEmpty, model.today == today,
                   model.selection == model.engine.clamped(today),
                   model.month == model.engine.monthStart(model.selection),
@@ -469,10 +614,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard let model else { throw CocoaError(.coderInvalidValue) }
         let original = model.selection
         // 自动化宿主可能抢走焦点；键盘验证期间固定浮层，避免外部失焦关闭干扰 Esc 结果。
-        let behavior = popover.behavior
-        popover.behavior = .applicationDefined
-        defer { popover.behavior = behavior }
-        showPopover()
+        let behavior = panel.behavior
+        panel.behavior = .applicationDefined
+        defer { panel.behavior = behavior }
+        showPanel()
         model.select(original)
         model.openYearOverview()
         guard model.yearDraft == "2026" else { throw CocoaError(.coderInvalidValue) }
@@ -502,8 +647,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         NSApp.postEvent(escape, atStart: false)
         try await Task.sleep(for: .milliseconds(400))
         try await waitForCalendarTransition()
-        guard !model.showingYearOverview, popover.isShown, model.selection == original else {
-            fputs("取消验证失败：overview=\(model.showingYearOverview), popover=\(popover.isShown), selection=\(model.selection == original), monitor=\(keyboardMonitor != nil)\n", stderr)
+        guard !model.showingYearOverview, panel.isShown, model.selection == original else {
+            fputs("取消验证失败：overview=\(model.showingYearOverview), panel=\(panel.isShown), selection=\(model.selection == original), monitor=\(keyboardMonitor != nil)\n", stderr)
             throw CocoaError(.coderInvalidValue)
         }
         model.openYearOverview()
@@ -748,9 +893,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func verifyCalendarTimeline(directory: URL) async throws {
         guard let model else { throw CocoaError(.coderInvalidValue) }
-        let behavior = popover.behavior
-        popover.behavior = .applicationDefined
-        defer { popover.behavior = behavior }
+        let behavior = panel.behavior
+        panel.behavior = .applicationDefined
+        defer { panel.behavior = behavior }
         defaults.set(1, forKey: "firstWeekday")
         model.select(model.engine.date(2026, 10, 23))
         try await Task.sleep(for: .milliseconds(400))
@@ -890,9 +1035,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func verifyMonthSnapping(directory: URL) async throws {
         guard let model else { throw CocoaError(.coderInvalidValue) }
-        let behavior = popover.behavior
-        popover.behavior = .applicationDefined
-        defer { popover.behavior = behavior }
+        let behavior = panel.behavior
+        panel.behavior = .applicationDefined
+        defer { panel.behavior = behavior }
         defaults.set(1, forKey: "firstWeekday")
         model.select(model.engine.date(2026, 10, 24))
         try await Task.sleep(for: .milliseconds(400))
@@ -1146,9 +1291,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func benchmarkOverviewScroll(directory: URL) async throws {
         guard let model else { throw CocoaError(.coderInvalidValue) }
-        let behavior = popover.behavior
-        popover.behavior = .applicationDefined
-        defer { popover.behavior = behavior }
+        let behavior = panel.behavior
+        panel.behavior = .applicationDefined
+        defer { panel.behavior = behavior }
         model.openYearOverview()
         try await Task.sleep(for: .milliseconds(500))
         try await waitForCalendarTransition()
@@ -1243,15 +1388,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func verifySettingsTransition(directory: URL) async throws {
         guard let model, let presentation = presentationController else { throw CocoaError(.coderInvalidValue) }
-        let behavior = popover.behavior
+        let behavior = panel.behavior
         let wasSettings = model.showingSettings
         let wasYearOverview = model.showingYearOverview
         let selection = model.selection
         let preferences = ["appearance", "blurEnabled"].map { ($0, defaults.object(forKey: $0)) }
-        popover.behavior = .applicationDefined
+        panel.behavior = .applicationDefined
         presentation.reduceMotionOverride = false
         defer {
-            popover.behavior = behavior
+            panel.behavior = behavior
             presentation.reduceMotionOverride = nil
             for (key, value) in preferences {
                 if let value { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) }
@@ -1276,7 +1421,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         func sample(_ name: String, settings: Bool, reduced: Bool = false) async throws {
             guard let shell = presentation.shell else { throw CocoaError(.coderInvalidValue) }
-            let size = popover.contentSize
+            let size = panel.contentSize
             let material = presentation.material
             let selection = model.selection
             let sourceCard = shell.content.frame
@@ -1289,7 +1434,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 guard presentation.shell === shell, presentation.material === material,
                       shell.chromeCoverage >= 0.999,
                       !shell.header.isHiddenOrHasHiddenAncestor, !shell.footer.isHiddenOrHasHiddenAncestor,
-                      abs(popover.contentSize.height - size.height) < 1 else {
+                      abs(panel.contentSize.height - size.height) < 1 else {
                     fputs("设置过渡重建外壳、隐藏上下栏或改变弹窗高度：\(name)\n", stderr)
                     throw CocoaError(.coderInvalidValue)
                 }
@@ -1313,7 +1458,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                   presentation.transitionView == nil, !presentation.hasActiveFrameDriver,
                   presentation.shell === shell, shell.content.alphaValue == 1,
                   shell.transitionCard == nil, model.showingSettings == settings,
-                  model.selection == selection, abs(popover.contentSize.height - size.height) < 1 else {
+                  model.selection == selection, abs(panel.contentSize.height - size.height) < 1 else {
                 fputs("设置过渡缺少中间帧或未恢复真实内容：\(name)，采样=\(frames.count)，进度=\(presentation.progress)，运动时间=\(presentation.motionSeconds)，回调=\(presentation.driverCallbackCount)，驱动=\(presentation.hasActiveFrameDriver)\n", stderr)
                 throw CocoaError(.coderInvalidValue)
             }
@@ -1380,7 +1525,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         try pressEscape()
         try await Task.sleep(for: .milliseconds(400))
         try await waitForCalendarTransition()
-        guard !model.showingSettings, model.showingYearOverview, popover.isShown,
+        guard !model.showingSettings, model.showingYearOverview, panel.isShown,
               !presentation.isTransitioning, presentation.shell?.content.alphaValue == 1 else {
             throw CocoaError(.coderInvalidValue)
         }
@@ -1395,7 +1540,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             model.showingSettings = true
             if interruption != "preparation" { try await Task.sleep(for: .milliseconds(60)) }
             switch interruption {
-            case "close": popover.performClose(nil)
+            case "close": panel.performClose(nil)
             case "reverse": try pressEscape()
             default: model.showingSettings = false
             }
@@ -1406,10 +1551,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             guard !presentation.isTransitioning, !presentation.hasActiveFrameDriver,
                   presentation.transitionView == nil, presentation.shell?.content.alphaValue == 1,
                   presentation.driverCallbackCount == callbacks,
-                  interruption == "close" || (!model.showingSettings && popover.isShown) else {
+                  interruption == "close" || (!model.showingSettings && panel.isShown) else {
                 throw CocoaError(.coderInvalidValue)
             }
-            if interruption == "close" { showPopover() }
+            if interruption == "close" { showPanel() }
             model.showingSettings = false
             try await Task.sleep(for: .milliseconds(400))
             try await waitForCalendarTransition()
@@ -1429,12 +1574,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard let model, let view = hostingController?.view, let presentation = presentationController else {
             throw CocoaError(.coderInvalidValue)
         }
-        let behavior = popover.behavior
-        popover.behavior = .applicationDefined
+        let behavior = panel.behavior
+        panel.behavior = .applicationDefined
         let keys = ["appearance", "blurEnabled", "menuBarDisplay", "menuBarDateFormat", "firstWeekday", "showSolarTerms"]
         let saved = keys.map { ($0, defaults.object(forKey: $0)) }
         defer {
-            popover.behavior = behavior
+            panel.behavior = behavior
             for (key, value) in saved {
                 if let value { defaults.set(value, forKey: key) }
                 else { defaults.removeObject(forKey: key) }
@@ -1475,7 +1620,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             try await waitForCalendarTransition()
             let calendarSize = view.bounds.size
             try await press("设置")
-            guard view.bounds.size == calendarSize, popover.contentSize == calendarSize else {
+            guard view.bounds.size == calendarSize, panel.contentSize == calendarSize else {
                 fputs("进入设置改变了弹窗尺寸：\(name)，日历=\(calendarSize)，设置=\(view.bounds.size)\n", stderr)
                 throw CocoaError(.coderInvalidValue)
             }
@@ -1491,7 +1636,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let yearSize = view.bounds.size
         model.showingSettings = true
         try await saveSnapshot("settings-height-year", to: directory)
-        guard view.bounds.size == yearSize, popover.contentSize == yearSize else {
+        guard view.bounds.size == yearSize, panel.contentSize == yearSize else {
             fputs("设置没有沿用年概览的高度。\n", stderr)
             throw CocoaError(.coderInvalidValue)
         }
@@ -1606,9 +1751,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func verifyTodayScroll(directory: URL) async throws {
         guard let model else { throw CocoaError(.coderInvalidValue) }
-        let behavior = popover.behavior
-        popover.behavior = .applicationDefined
-        defer { popover.behavior = behavior }
+        let behavior = panel.behavior
+        panel.behavior = .applicationDefined
+        defer { panel.behavior = behavior }
         defaults.set(1, forKey: "firstWeekday")
         func pressToday() throws {
             func find(in element: AnyObject) -> AnyObject? {
@@ -1728,7 +1873,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 case "repeat": try pressToday()
                 case "settings": model.showingSettings = true
                 case "year": model.openYearOverview()
-                default: popover.performClose(nil)
+                default: panel.performClose(nil)
                 }
                 try await Task.sleep(for: .milliseconds(850))
                 if interruption == "repeat" {
@@ -1766,7 +1911,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     }
                 }
                 if interruption == "close" {
-                    showPopover()
+                    showPanel()
                     model.today = model.engine.date(2026, 10, 23)
                 }
             }
@@ -1777,9 +1922,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func verifyMonthNavigationMotion(directory: URL) async throws {
         guard let model else { throw CocoaError(.coderInvalidValue) }
-        let behavior = popover.behavior
-        popover.behavior = .applicationDefined
-        defer { popover.behavior = behavior }
+        let behavior = panel.behavior
+        panel.behavior = .applicationDefined
+        defer { panel.behavior = behavior }
         defaults.set(1, forKey: "firstWeekday")
         let timeline = model.calendarTimeline(firstWeekday: 1)
         let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -1957,9 +2102,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             try await Task.sleep(for: .milliseconds(label == "今天" ? 850 : 400))
             try await waitForCalendarTransition()
         }
-        let behavior = popover.behavior
-        popover.behavior = .applicationDefined
-        defer { popover.behavior = behavior }
+        let behavior = panel.behavior
+        panel.behavior = .applicationDefined
+        defer { panel.behavior = behavior }
         try await click("上个月")
         guard model.selection == model.engine.date(2026, 9, 24) else {
             fputs("上个月按钮未定位到九月。\n", stderr)
@@ -2115,10 +2260,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func verifyCalendarZoom(directory: URL) async throws {
         guard let model, let presentation = presentationController else { throw CocoaError(.coderInvalidValue) }
-        let behavior = popover.behavior
-        popover.behavior = .applicationDefined
+        let behavior = panel.behavior
+        panel.behavior = .applicationDefined
         presentation.reduceMotionOverride = false
-        defer { popover.behavior = behavior; presentation.reduceMotionOverride = nil }
+        defer { panel.behavior = behavior; presentation.reduceMotionOverride = nil }
         var report: [[String: Any]] = []
         func sample(_ name: String, moving: Bool = true, matched: Bool = true, expectedMonth: Int? = nil) async throws {
             var positions: [Double] = []
@@ -2196,7 +2341,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                             savedStages.insert(stage)
                         }
                     }
-                    heights.append(popover.contentSize.height)
+                    heights.append(panel.contentSize.height)
                     cardHeights.append(card.height)
                     timing.append(["time": presentation.elapsedFraction, "progress": presentation.progress,
                                    "seconds": presentation.motionSeconds, "outgoing": presentation.outgoingOpacity,
@@ -2215,7 +2360,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             try checkChrome()
             guard cardHeights.count >= 3, (!matched || positions.count >= 3), savedMiddle, !presentation.isTransitioning,
                   presentation.transitionView == nil, hostingController?.view.alphaValue == 1 else {
-                fputs("月年过渡没有连续中间帧或未清理：\(name)，采样=\(positions.count)，进度=\(presentation.progress)，活动=\(presentation.isTransitioning)，中间帧=\(savedMiddle)，准备=\(presentation.preparationPhases)，驱动=\(presentation.hasActiveFrameDriver)，回调=\(presentation.driverCallbackCount)，屏幕=\(String(describing: presentation.view.window?.screen))，透明度=\(hostingController?.view.alphaValue ?? -1)，尺寸=\(popover.contentSize)\n", stderr)
+                fputs("月年过渡没有连续中间帧或未清理：\(name)，采样=\(positions.count)，进度=\(presentation.progress)，活动=\(presentation.isTransitioning)，中间帧=\(savedMiddle)，准备=\(presentation.preparationPhases)，驱动=\(presentation.hasActiveFrameDriver)，回调=\(presentation.driverCallbackCount)，屏幕=\(String(describing: presentation.view.window?.screen))，透明度=\(hostingController?.view.alphaValue ?? -1)，尺寸=\(panel.contentSize)\n", stderr)
                 throw CocoaError(.coderInvalidValue)
             }
             if moving {
@@ -2289,8 +2434,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             try await Task.sleep(for: .milliseconds(450))
             try await waitForCalendarTransition()
             guard let host = hostingController,
-                  abs(popover.contentSize.height - host.view.fittingSize.height) < 1 else {
-                fputs("弹窗没有跟随月份详情的实际尺寸：\(popover.contentSize)，预期=\(hostingController?.view.fittingSize ?? .zero)\n", stderr)
+                  abs(panel.contentSize.height - host.view.fittingSize.height) < 1 else {
+                fputs("弹窗没有跟随月份详情的实际尺寸：\(panel.contentSize)，预期=\(hostingController?.view.fittingSize ?? .zero)\n", stderr)
                 throw CocoaError(.coderInvalidValue)
             }
             try saveViewSnapshot(presentation.view, name: "zoom-\(year)-\(month)-start", to: directory)
@@ -2381,7 +2526,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                           isARepeat: false, keyCode: 53) else { throw CocoaError(.coderInvalidValue) }
                 NSApp.postEvent(escape, atStart: false)
             case "settings": model.showingSettings = true
-            default: popover.performClose(nil)
+            default: panel.performClose(nil)
             }
             try await Task.sleep(for: .milliseconds(400))
             try await waitForCalendarTransition()
@@ -2394,7 +2539,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 fputs("月年过渡中断后残留遮罩或覆盖选择：\(interruption)\n", stderr)
                 throw CocoaError(.coderInvalidValue)
             }
-            if interruption == "close" { showPopover() }
+            if interruption == "close" { showPanel() }
             model.showingSettings = false
             model.select(selection)
             try await Task.sleep(for: .milliseconds(400))
@@ -2451,10 +2596,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             try await waitForMovement()
             let count = presentation.retargetCount
             let card = presentation.movingCardFrame
-            let height = popover.contentSize.height
+            let height = panel.contentSize.height
             action()
             guard presentation.isTransitioning, presentation.movingCardFrame == card,
-                  abs(popover.contentSize.height - height) < 0.1 else {
+                  abs(panel.contentSize.height - height) < 0.1 else {
                 fputs("重定向在准备终点前跳变：\(name)\n", stderr)
                 throw CocoaError(.coderInvalidValue)
             }

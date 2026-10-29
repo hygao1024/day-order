@@ -16,7 +16,7 @@ struct CalendarView: View {
     @AppStorage("menuBarDisplay") private var menuBarDisplay = MenuBarDisplay.iconAndDate.rawValue
     @AppStorage("menuBarDateFormat") private var menuBarDateFormat = MenuBarDateFormat.monthDayWeekday.rawValue
     let updateMenuBar: () -> Void
-    let updatePopoverAppearance: (NSAppearance?) -> Void
+    let updatePanelAppearance: (NSAppearance?) -> Void
     let dismiss: () -> Void
 
     private let weekdays = ["日", "一", "二", "三", "四", "五", "六"]
@@ -202,7 +202,7 @@ struct CalendarView: View {
     private func applyAppearance() {
         NSApp.appearance = appearance == "light" ? NSAppearance(named: .aqua)
             : appearance == "dark" ? NSAppearance(named: .darkAqua) : nil
-        updatePopoverAppearance(NSApp.appearance)
+        updatePanelAppearance(NSApp.appearance)
     }
 }
 
