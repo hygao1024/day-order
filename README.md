@@ -119,7 +119,7 @@ python3 scripts/run-smoke.py "$PWD/build/settings-transition-smoke" --settings-t
 python3 scripts/run-smoke.py "$PWD/build/year-overview-smoke" --year-overview-smoke
 ```
 
-该检查覆盖跨年滚动、年份输入与重复跳转、鼠标和辅助功能月份选择、Esc 分层返回及日期边界；`year-rounded-{solid,blur}-{light,dark}.png` 展示设计稿对应日期在毛玻璃开关和深浅色下的圆角区域，`year-rounded-six-weeks.png` 检查紧凑行高下的六周月份。`year-month-hover-*.png` 及其 `-pressed` 快照检查月份留白、圆角和六周日期在悬停／按下时的表现。普通冒烟也执行同一组年概览验证。
+该检查覆盖跨年滚动、年份输入与重复跳转、鼠标和辅助功能月份选择、Esc 分层返回及日期边界；`year-rounded-{solid,blur}-{light,dark}.png` 展示设计稿对应日期在毛玻璃开关和深浅色下的圆角区域，`year-rounded-six-weeks.png` 检查紧凑行高下的六周月份。`year-month-hover-*.png` 及其 `-pressed` 快照检查月份留白、圆角和六周日期在悬停／按下时的表现；对应的 `-caption` 快照验证转场标题保留文字且边缘透明，避免反馈底色重复叠加。普通冒烟也执行同一组年概览验证。
 
 月视图与年概览的缩放过渡使用独立真实视图回归：
 
@@ -135,7 +135,7 @@ python3 scripts/run-smoke.py "$PWD/build/calendar-zoom-smoke" --calendar-zoom-sm
 python3 scripts/run-smoke.py "$PWD/build/calendar-grid-smoke" --calendar-grid-smoke
 ```
 
-该检查输出 `grid-geometry.json`、`grid-retargeting.json` 和逐阶段快照，验证日期单份绘制、正文快照没有残留今天红圈、四至六周及闰年二月的月端点位置误差、月中滚动返回、连续反向、设置插入及减少动态效果。它直接推进真实转场绘制层，不能代替上面的显示刷新驱动回归，也不证明物理帧率。
+该检查输出 `grid-geometry.json`、`grid-retargeting.json` 和逐阶段快照，验证日期单份绘制、正文快照没有残留今天红圈、四至六周及闰年二月的月端点位置误差、月中滚动返回、连续反向、设置插入及减少动态效果，并生成按下 2027 年 1 月按钮后的放大快照。`grid-caption-*` 快照复用年概览的标题透明度检查，覆盖深浅色、材质开关及悬停／按下状态。它直接推进真实转场绘制层，不能代替上面的显示刷新驱动回归，也不证明物理帧率。
 
 月初吸附的独立回归通过真实视图和合成滚轮事件检查手势、惯性等待、月中不吸附、动画取消、导航取消、设置返回、四至六周完整显示、日期边界及深浅色布局：
 

@@ -63,6 +63,7 @@ private final class MiniMonthButton: NSButton, CalendarZoomParticipant {
     private var todayDay: Int?
     private var onSelect: (() -> Void)?
     private var hovered = false
+    private var drawingZoomCaption = false
     private var hoverArea: NSTrackingArea?
     override var isFlipped: Bool { true }
 
@@ -118,21 +119,17 @@ private final class MiniMonthButton: NSButton, CalendarZoomParticipant {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let month = monthLayout else { return }
+        if drawingZoomCaption {
+            drawCaption(month)
+            return
+        }
         if hovered || isHighlighted {
             (isHighlighted ? NSColor.labelColor.withAlphaComponent(0.08) : Self.hoverColor).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: YearCalendarLayout.monthCornerRadius,
                          yRadius: YearCalendarLayout.monthCornerRadius).fill()
         }
-        let inset = YearCalendarLayout.monthContentInset
         if zoomHiddenDays.isEmpty {
-            let heading = todayDay == nil ? Self.months[month.month - 1] : Self.currentMonths[month.month - 1]
-            heading.draw(at: NSPoint(x: inset, y: inset))
-            let columnWidth = (bounds.width - 2 * inset) / 7
-            for column in 0..<7 {
-                Self.weekdays[(firstWeekday - 1 + column) % 7]
-                    .draw(centeredIn: NSRect(x: inset + CGFloat(column) * columnWidth,
-                                           y: inset + 22, width: columnWidth, height: 10))
-            }
+            drawCaption(month)
         }
         for day in 1...month.dayCount {
             if zoomHiddenDays.contains(day) { continue }
@@ -144,6 +141,18 @@ private final class MiniMonthButton: NSButton, CalendarZoomParticipant {
             } else {
                 Self.days[day - 1].draw(centeredIn: rect)
             }
+        }
+    }
+
+    private func drawCaption(_ month: MiniMonthLayout) {
+        let inset = YearCalendarLayout.monthContentInset
+        let heading = todayDay == nil ? Self.months[month.month - 1] : Self.currentMonths[month.month - 1]
+        heading.draw(at: NSPoint(x: inset, y: inset))
+        let columnWidth = (bounds.width - 2 * inset) / 7
+        for column in 0..<7 {
+            Self.weekdays[(firstWeekday - 1 + column) % 7]
+                .draw(centeredIn: NSRect(x: inset + CGFloat(column) * columnWidth,
+                                       y: inset + 22, width: columnWidth, height: 10))
         }
     }
 
@@ -165,6 +174,9 @@ private final class MiniMonthButton: NSButton, CalendarZoomParticipant {
     func zoomCaption(month: Int, in root: NSView) -> CalendarZoomCaption? {
         guard monthID == month else { return nil }
         let rect = NSRect(x: 0, y: 0, width: bounds.width, height: YearCalendarLayout.monthContentInset + 37)
+        // 反馈底色由整张画布拥有，标题快照只保留文字，避免半透明底色叠加。
+        drawingZoomCaption = true
+        defer { drawingZoomCaption = false }
         guard let image = NSImage(data: dataWithPDF(inside: rect)) else { return nil }
         return CalendarZoomCaption(image: image, frame: root.convert(rect, from: self))
     }

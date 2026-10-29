@@ -620,8 +620,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         CGWarpMouseCursorPosition(CGPoint(x: point.x, y: screen.frame.maxY - point.y))
         button.updateTrackingAreas()
         try await saveSnapshot(name, to: directory)
+        try verifyOverviewCaption(button, month: year * 100 + month, name: name, to: directory)
         button.highlight(true)
         try await saveSnapshot(name + "-pressed", to: directory)
+        try verifyOverviewCaption(button, month: year * 100 + month, name: name + "-pressed", to: directory)
+    }
+
+    private func verifyOverviewCaption(_ button: NSButton, month: Int, name: String, to directory: URL) throws {
+        guard let participant = button as? any CalendarZoomParticipant,
+              let caption = participant.zoomCaption(month: month, in: button),
+              let image = CalendarSnapshotImage.rasterized(caption.image, scale: 2),
+              let bitmap = image.representations.first as? NSBitmapImageRep,
+              let png = bitmap.representation(using: .png, properties: [:]) else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        try png.write(to: directory.appendingPathComponent(name + "-caption.png"))
+        // 右侧 4 pt 位于文字之外，必须透明，防止反馈底色在转场中叠加。
+        let x = bitmap.pixelsWide - 8
+        for y in 0..<bitmap.pixelsHigh {
+            guard let color = bitmap.colorAt(x: x, y: y), color.alphaComponent < 0.01 else {
+                fputs("转场标题快照包含反馈底色：\(name)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+        }
+        let hasText = (0..<bitmap.pixelsWide).contains { x in
+            (0..<bitmap.pixelsHigh).contains { y in
+                (bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.5
+            }
+        }
+        guard hasText else {
+            fputs("转场标题快照丢失文字：\(name)\n", stderr)
+            throw CocoaError(.coderInvalidValue)
+        }
     }
 
     private func verifyMenuBar(directory: URL, defaults: UserDefaults, domain: String) async throws {
@@ -1944,7 +1974,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             guard presentation.isPreparedForSampling else { throw CocoaError(.coderInvalidValue) }
         }
         for (year, month, weekday, offset) in [(2026, 10, 1, 0), (2026, 3, 2, 0), (2021, 2, 2, 0),
-                                               (2024, 2, 1, 0), (2026, 10, 1, 130)] {
+                                               (2024, 2, 1, 0), (2026, 10, 1, 130), (2027, 1, 1, 0)] {
             defaults.set(weekday, forKey: "firstWeekday")
             model.select(model.engine.date(year, month, 23))
             try await Task.sleep(for: .milliseconds(150))
@@ -1957,7 +1987,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 try await Task.sleep(for: .milliseconds(150))
             }
             for intoYear in [true, false] {
-                if intoYear { model.openYearOverview() } else { model.dismissYearLevel() }
+                var pressedMonth: NSButton?
+                if intoYear {
+                    model.openYearOverview()
+                } else if year == 2027 {
+                    let table = try overviewTable()
+                    let row = (year - CalendarEngine.years.lowerBound) * 7 + 1 + (month - 1) / 2
+                    guard let pair = table.view(atColumn: 0, row: row, makeIfNecessary: false),
+                          let button = pair.subviews.compactMap({ $0 as? NSButton })
+                            .first(where: { $0.title == "\(year)年\(month)月" }) else {
+                        throw CocoaError(.coderInvalidValue)
+                    }
+                    pressedMonth = button
+                    button.highlight(true)
+                    guard button.accessibilityPerformPress() else { throw CocoaError(.coderInvalidValue) }
+                } else {
+                    model.dismissYearLevel()
+                }
+                defer { pressedMonth?.highlight(false) }
                 try await prepared()
                 let name = "grid-\(year)-\(month)-\(offset)-\(intoYear ? "out" : "in")"
                 var samples: [[String: Double]] = []
@@ -2028,6 +2075,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .write(to: directory.appendingPathComponent("grid-retargeting.json"))
         try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
             .write(to: directory.appendingPathComponent("grid-geometry.json"))
+        for blur in [false, true] {
+            defaults.set(blur, forKey: "blurEnabled")
+            for appearance in ["light", "dark"] {
+                defaults.set(appearance, forKey: "appearance")
+                try await saveSnapshot("grid-caption-\(blur)-\(appearance)", to: directory)
+                try await saveOverviewMonthFeedback(year: 2026, month: 10,
+                    name: "grid-caption-\(blur)-\(appearance)", to: directory)
+            }
+        }
     }
 
     private func verifyCalendarZoom(directory: URL) async throws {
