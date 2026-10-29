@@ -500,7 +500,6 @@ private final class CalendarDayButton: NSButton, CalendarZoomParticipant {
         if self.today { labels.append("今天") }
         setAccessibilityLabel(labels.joined(separator: "，"))
         setAccessibilityValue(selected ? "已选中" : "")
-        toolTip = labels.joined(separator: " · ")
         needsDisplay = true
     }
 
