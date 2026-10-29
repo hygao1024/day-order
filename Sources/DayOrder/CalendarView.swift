@@ -94,7 +94,7 @@ struct CalendarView: View {
 
     private var monthNavigation: some View {
         HStack(spacing: 0) {
-            Button { model.moveMonth(-1) } label: {
+            Button { model.moveMonth(-1, animated: true) } label: {
                 Image(systemName: "chevron.left").frame(width: 28, height: 24)
             }
             .disabled(!model.canMoveMonth(-1))
@@ -106,7 +106,7 @@ struct CalendarView: View {
             }
             .help("回到今天（Home）")
             navigationDivider
-            Button { model.moveMonth(1) } label: {
+            Button { model.moveMonth(1, animated: true) } label: {
                 Image(systemName: "chevron.right").frame(width: 28, height: 24)
             }
             .disabled(!model.canMoveMonth(1))

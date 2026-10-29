@@ -229,6 +229,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 NSApp.terminate(nil)
                 return
             }
+            if ProcessInfo.processInfo.arguments.contains("--month-navigation-smoke") {
+                try await verifyMonthNavigationMotion(directory: directory)
+                try "月份箭头的非线性位移、连续导航、取消与边界验证通过。\n"
+                    .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.arguments.contains("--today-scroll-smoke") {
                 try await verifyTodayScroll(directory: directory)
                 try "返回今天的连续位移、终点与取消验证通过。\n"
@@ -1709,6 +1716,153 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         model.goToToday()
         try await saveSnapshot("today-scroll-arrived", to: directory)
+    }
+
+    private func verifyMonthNavigationMotion(directory: URL) async throws {
+        guard let model else { throw CocoaError(.coderInvalidValue) }
+        let behavior = popover.behavior
+        popover.behavior = .applicationDefined
+        defer { popover.behavior = behavior }
+        defaults.set(1, forKey: "firstWeekday")
+        let timeline = model.calendarTimeline(firstWeekday: 1)
+        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        func press(_ label: String) throws {
+            func find(_ element: AnyObject) -> AnyObject? {
+                if element.accessibilityRole?() == .button, element.accessibilityLabel?() == label { return element }
+                for child in element.accessibilityChildren?() ?? [] {
+                    if let result = find(child as AnyObject) { return result }
+                }
+                return nil
+            }
+            guard let view = hostingController?.view, let button = find(view),
+                  button.accessibilityPerformPress?() == true else {
+                fputs("无法触发月份导航按钮：\(label)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+        }
+        func prepare(_ date: Date) async throws {
+            model.select(date)
+            try await Task.sleep(for: .milliseconds(350))
+            try await waitForCalendarTransition()
+        }
+        func assertArrival(_ date: Date) throws {
+            let table = try calendarTimelineTable()
+            let month = model.engine.monthStart(date)
+            let row = timeline.weekRow(containing: month)
+            guard model.selection == date, model.month == month, model.calendarSnappedMonth == month,
+                  model.calendarMonthNavigationTarget == nil,
+                  abs(table.visibleRect.minY - table.rect(ofRow: row).minY) < 1 else {
+                fputs("月份导航未完整对齐目标或未释放请求：\(date)\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+        }
+        var reports: [[String: Any]] = []
+        // 包含双向、跨年、短月，以及四、五、六行月份。
+        for (source, target, label) in [
+            (model.engine.date(2026, 10, 31), model.engine.date(2026, 11, 30), "下个月"),
+            (model.engine.date(2026, 3, 31), model.engine.date(2026, 2, 28), "上个月"),
+            (model.engine.date(2026, 12, 24), model.engine.date(2027, 1, 24), "下个月"),
+            (model.engine.date(2026, 7, 24), model.engine.date(2026, 8, 24), "下个月"),
+            (model.engine.date(2015, 3, 24), model.engine.date(2015, 2, 24), "上个月")
+        ] {
+            try await prepare(source)
+            let table = try calendarTimelineTable()
+            let row = timeline.weekRow(containing: model.engine.monthStart(target))
+            let initial = table.visibleRect.minY - table.rect(ofRow: row).minY
+            var previous = initial
+            var samples: [[String: Double]] = []
+            let began = ProcessInfo.processInfo.systemUptime
+            try press(label)
+            while ProcessInfo.processInfo.systemUptime - began < 0.65 {
+                try await Task.sleep(for: .milliseconds(8))
+                let offset = table.visibleRect.minY - table.rect(ofRow: row).minY
+                guard abs(offset) <= abs(previous) + 0.6, offset * initial >= -0.6 else {
+                    fputs("切月动画反向或越过终点\n", stderr)
+                    throw CocoaError(.coderInvalidValue)
+                }
+                if abs(offset) > 1, abs(offset - initial) > 1 {
+                    samples.append(["time": ProcessInfo.processInfo.systemUptime - began,
+                                    "progress": 1 - offset / initial])
+                }
+                previous = offset
+            }
+            if !reduced {
+                guard samples.count >= 3,
+                      samples.contains(where: { $0["time"]! < 0.22 && $0["progress"]! > 0.7 }) else {
+                    fputs("切月缺少连续位置或先快后缓的非线性减速\n", stderr)
+                    throw CocoaError(.coderInvalidValue)
+                }
+            }
+            try assertArrival(target)
+            reports.append(["source": source.description, "target": target.description, "samples": samples])
+        }
+        try JSONSerialization.data(withJSONObject: reports, options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("month-navigation-motion.json"))
+        try await saveSnapshot("month-navigation-arrived", to: directory)
+
+        try await prepare(model.engine.date(2026, 10, 24))
+        try press("下个月")
+        try press("下个月")
+        try await Task.sleep(for: .milliseconds(70))
+        try press("下个月")
+        try await Task.sleep(for: .milliseconds(550))
+        try assertArrival(model.engine.date(2027, 1, 24))
+        try press("上个月")
+        try await Task.sleep(for: .milliseconds(70))
+        let beforeReversal = try calendarTimelineTable().visibleRect.minY
+        try press("下个月")
+        guard abs(try calendarTimelineTable().visibleRect.minY - beforeReversal) < 1 else {
+            fputs("反向切月瞬间跳动\n", stderr)
+            throw CocoaError(.coderInvalidValue)
+        }
+        try await Task.sleep(for: .milliseconds(550))
+        try assertArrival(model.engine.date(2027, 1, 24))
+
+        if !reduced {
+            for interruption in ["wheel-pending", "wheel", "selection-pending", "selection", "settings-pending", "settings", "year-pending", "year", "today"] {
+                try await prepare(model.engine.date(2026, 10, 24))
+                try press("下个月")
+                if !interruption.hasSuffix("-pending") { try await Task.sleep(for: .milliseconds(70)) }
+                let table = try calendarTimelineTable()
+                let position = table.visibleRect.minY
+                switch interruption {
+                case "wheel-pending", "wheel":
+                    (table.enclosingScrollView as? CalendarTimelineScrollView)?.onActivity?()
+                case "selection-pending", "selection": model.selectVisibleDay(model.engine.date(2026, 10, 12))
+                case "settings-pending", "settings": model.showingSettings = true
+                case "year-pending", "year": model.openYearOverview()
+                default: try press("今天")
+                }
+                try await Task.sleep(for: .milliseconds(550))
+                if interruption == "today" {
+                    try assertArrival(model.today)
+                } else {
+                    guard model.calendarMonthNavigationTarget == nil else { throw CocoaError(.coderInvalidValue) }
+                    if interruption.hasPrefix("selection") {
+                        guard model.selection == model.engine.date(2026, 10, 12) else { throw CocoaError(.coderInvalidValue) }
+                    }
+                    if interruption.hasPrefix("wheel") || interruption.hasPrefix("selection") {
+                        guard abs(table.visibleRect.minY - position) < 1 else {
+                            fputs("中断切月后旧动画仍移动日期区：\(interruption)\n", stderr)
+                            throw CocoaError(.coderInvalidValue)
+                        }
+                    }
+                }
+                model.showingSettings = false
+                model.showingYearOverview = false
+                try await waitForCalendarTransition()
+            }
+        }
+        for (source, target, label) in [
+            (model.engine.date(1901, 2, 24), model.engine.date(1901, 1, 24), "上个月"),
+            (model.engine.date(2100, 11, 24), model.engine.date(2100, 12, 24), "下个月")
+        ] {
+            try await prepare(source)
+            try press(label)
+            model.moveMonth(label == "上个月" ? -1 : 1, animated: true)
+            try await Task.sleep(for: .milliseconds(550))
+            try assertArrival(target)
+        }
     }
 
     private func verifyMonthNavigation(directory: URL) async throws {

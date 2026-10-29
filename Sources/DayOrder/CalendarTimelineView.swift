@@ -105,7 +105,7 @@ struct CalendarTimelineView: NSViewRepresentable {
         private var snapTask: Task<Void, Never>?
         private var snapSerial = 0
         private var animatingSnap = false
-        private var returningToToday = false
+        private var navigating = false
         private var liveScrolling = false
 
         init(model: CalendarModel, firstWeekday: Int, options: CalendarContentOptions) {
@@ -169,21 +169,27 @@ struct CalendarTimelineView: NSViewRepresentable {
                 table.layoutSubtreeIfNeeded()
                 if animate, let startingSelection = model.calendarScrollAnimationSelection,
                    let layout = monthLayout(for: model.calendarScrollTarget) {
-                    returningToToday = true
+                    navigating = true
                     animatingSnap = true
                     let serial = snapSerial
                     let requestedRevision = model.calendarScrollRevision
                     let target = model.calendarScrollTarget
                     let distance = abs(table.visibleRect.minY - table.rect(ofRow: layout.weeks.lowerBound).minY)
-                    let duration = distance < 0.5 ? 0 : min(0.45, 0.24 + distance / 6000)
+                    let monthNavigation = model.calendarMonthNavigationTarget != nil
+                    let duration = distance < 0.5 ? 0 : monthNavigation ? 0.36 : min(0.45, 0.24 + distance / 6000)
                     snapTask = Task { [weak self] in
                         guard let self else { return }
                         defer {
-                            if snapSerial == serial { snapTask = nil; animatingSnap = false; returningToToday = false }
+                            if snapSerial == serial {
+                                snapTask = nil
+                                animatingSnap = false
+                                navigating = false
+                                model.finishCalendarScrollAnimation(revision: requestedRevision)
+                            }
                         }
                         await animateMonth(layout, duration: duration, serial: serial,
                                            requestedRevision: requestedRevision, selectionOnArrival: target,
-                                           startingSelection: startingSelection)
+                                           startingSelection: startingSelection, easeOut: monthNavigation)
                     }
                 } else if let restoring, restoredMonth == nil {
                     moveViewport(to: table.rect(ofRow: timeline.weekRow(containing: restoring.date, inMonth: restoring.month)).minY + restoring.offset)
@@ -203,11 +209,12 @@ struct CalendarTimelineView: NSViewRepresentable {
         }
 
         private func cancelSnap() {
+            if navigating, let revision { model.finishCalendarScrollAnimation(revision: revision) }
             snapSerial += 1
             snapTask?.cancel()
             snapTask = nil
             animatingSnap = false
-            returningToToday = false
+            navigating = false
         }
 
         private func moveViewport(to y: CGFloat) {
@@ -219,7 +226,10 @@ struct CalendarTimelineView: NSViewRepresentable {
 
         func beginInteraction() {
             cancelSnap()
-            if model.calendarScrollAnimationSelection != nil { revision = model.calendarScrollRevision }
+            if model.calendarScrollAnimationSelection != nil {
+                revision = model.calendarScrollRevision
+                model.finishCalendarScrollAnimation(revision: model.calendarScrollRevision)
+            }
             model.calendarSnappedMonth = nil
             recordViewport()
         }
@@ -235,7 +245,7 @@ struct CalendarTimelineView: NSViewRepresentable {
         }
 
         func scheduleSnap() {
-            guard !returningToToday else { return }
+            guard !navigating else { return }
             cancelSnap()
             guard !liveScrolling,
                   let scroll = table?.enclosingScrollView as? CalendarTimelineScrollView,
@@ -260,7 +270,7 @@ struct CalendarTimelineView: NSViewRepresentable {
 
         private func animateMonth(_ candidate: MonthSnap, duration: Double, serial: Int,
                                   requestedRevision: Int, selectionOnArrival: Date? = nil,
-                                  startingSelection: Date? = nil) async {
+                                  startingSelection: Date? = nil, easeOut: Bool = false) async {
             guard let table else { return }
             let first = candidate.weeks.lowerBound
             let offset = table.visibleRect.minY - table.rect(ofRow: first).minY
@@ -273,7 +283,7 @@ struct CalendarTimelineView: NSViewRepresentable {
                       !model.showingSettings, !model.showingYearOverview,
                       table.window?.isVisible == true else { return }
                 let progress = duration == 0 ? 1 : min(1, (ProcessInfo.processInfo.systemUptime - start) / duration)
-                let remaining = 1 - progress * progress * (3 - 2 * progress)
+                let remaining = easeOut ? pow(1 - progress, 3) : 1 - progress * progress * (3 - 2 * progress)
                 moveViewport(to: table.rect(ofRow: first).minY + offset * remaining)
                 if selectionOnArrival != nil { recordViewport() }
                 if progress == 1 { break }

@@ -36,6 +36,7 @@ final class CalendarModel: ObservableObject {
     private(set) var calendarScrollTarget: Date
     // 非空表示动画请求，并记录请求时的选择以识别启动前的取消。
     private(set) var calendarScrollAnimationSelection: Date?
+    private(set) var calendarMonthNavigationTarget: Date?
     var calendarViewport: (date: Date, month: Date, offset: CGFloat)?
     var calendarSnappedMonth: Date?
     weak var overviewFocusSource: (any CalendarOverviewFocusSource)?
@@ -140,6 +141,7 @@ final class CalendarModel: ObservableObject {
         month = engine.monthStart(date)
         calendarScrollTarget = date
         calendarScrollAnimationSelection = nil
+        calendarMonthNavigationTarget = nil
         calendarViewport = nil
         calendarSnappedMonth = nil
         calendarScrollRevision += 1
@@ -202,19 +204,39 @@ final class CalendarModel: ObservableObject {
         // 选择与详情在到达后更新；保留当前浏览位置供动画及中断恢复使用。
         calendarScrollTarget = target
         calendarScrollAnimationSelection = selection
+        calendarMonthNavigationTarget = nil
         calendarSnappedMonth = nil
         calendarScrollRevision += 1
     }
 
     func canMoveMonth(_ amount: Int) -> Bool {
-        engine.isSupported(engine.addingMonths(amount, to: month))
+        engine.isSupported(engine.addingMonths(amount, to: calendarMonthNavigationTarget ?? month))
     }
 
-    func moveMonth(_ amount: Int) {
+    func moveMonth(_ amount: Int, animated: Bool = false) {
         guard canMoveMonth(amount) else { return }
-        let target = engine.addingMonths(amount, to: month)
+        let target = engine.addingMonths(amount, to: calendarMonthNavigationTarget ?? month)
         let parts = engine.calendar.dateComponents([.year, .month], from: target)
-        jumpToMonth(parts.month!, year: parts.year!)
+        guard animated, !showingSettings, !showingYearOverview,
+              let days = engine.calendar.range(of: .day, in: .month, for: target) else {
+            jumpToMonth(parts.month!, year: parts.year!)
+            return
+        }
+        let day = min(engine.calendar.component(.day, from: selection), days.count)
+        selection = engine.date(parts.year!, parts.month!, day)
+        overviewFocusMonth = nil
+        calendarScrollTarget = selection
+        calendarScrollAnimationSelection = selection
+        // 连点以已请求月份累计，不能被动画途中可见的旧月份覆盖。
+        calendarMonthNavigationTarget = engine.monthStart(target)
+        calendarSnappedMonth = nil
+        calendarScrollRevision += 1
+    }
+
+    func finishCalendarScrollAnimation(revision: Int) {
+        guard revision == calendarScrollRevision else { return }
+        calendarScrollAnimationSelection = nil
+        calendarMonthNavigationTarget = nil
     }
 
     func moveDay(_ amount: Int) {
