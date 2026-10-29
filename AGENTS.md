@@ -47,3 +47,48 @@
 - 禁止裸 `git push --force`；明确授权改写时使用带精确租约的 `--force-with-lease`。
 - 准备评审、推送或声称验证通过前，检查相对已验证基线的完整变更范围；每处变更都必须服务当前需求、仓库规则或必要验证。
 - Git hook 的命令和接入方式由目标仓库已有系统拥有；保持本地 checkpoint（检查点）廉价，不把完整检查套件固定到每次提交或推送。
+
+## 项目文档分工
+
+- [README](README.md) 是使用者与贡献者的项目入口，提供简短项目定位、可直接执行的快速开始、核心功能、真实界面、基本操作、数据范围和开发链接。保持客观说明，避免宣传口号；技术选型仅作简要介绍，界面尺寸、动画参数、缓存协议和验证日志放入维护文档。
+- README 保留上手所需的环境要求和最小构建命令，本文件补充开发运行方式、基础验证和数据维护入口；[日历行为与数据参考](docs/calendar-reference.md) 拥有详细交互和数据约定，[界面验证参考](docs/verification.md) 拥有专项检查及其覆盖限制。
+- 产品展示图来自当前应用的真实视图快照，保存在 `docs/images/`；更新方法见[展示图维护](docs/verification.md#readme-展示图维护)。界面变化时重新生成并人工检查相关图片，不以概念图代替产品现状。
+- 长期设计理由继续写入 Agent Notes，避免在 README 或本文件中重复维护实现细节。
+
+## 构建与基础验证
+
+日序使用 Swift、SwiftUI（声明式界面框架）和 AppKit（macOS 原生界面框架），通过 Swift Package（Swift 软件包）构建。`DayOrder` 拥有菜单栏、弹窗、视图和应用状态，`DayOrderCore` 拥有日期、节日与放假数据逻辑。
+
+需要 macOS 14 或更高版本、Swift 6.0 或更高版本。安装 Xcode 或 Command Line Tools（命令行开发工具）即可；没有第三方依赖。
+
+```sh
+./scripts/build-app.sh
+open build/DayOrder.app
+```
+
+产物是本机架构的应用包，采用本地临时签名；未经 Developer ID（开发者身份）签名或公证。可将 `build/DayOrder.app` 拖入“应用程序”。开发时也可执行 `swift run DayOrder`，或使用 Xcode 打开 `Package.swift`。
+
+应用图标源文件为 [Assets/AppIcon.png](Assets/AppIcon.png)。构建脚本通过 `scripts/generate-icon.swift` 保留透明通道并生成 16–1024 像素的标准尺寸，再使用 `iconutil` 打包为应用内的 `AppIcon.icns`。更新图标时替换该源文件并重新构建；源图必须是至少 1024 × 1024 像素的正方形。菜单栏的动态日期图标由应用独立绘制。
+
+从仓库根目录执行基础验证，按实际改动选择；文档和图片整理不要求重复运行无关逻辑测试：
+
+```sh
+swift test
+./scripts/build-app.sh debug
+python3 scripts/run-smoke.py "$PWD/build/smoke"
+git diff --check
+```
+
+真实界面验证需要已登录的 macOS 图形会话，使用隔离偏好与缓存。普通冒烟不联网；详细覆盖、专项参数、联网验证和性能采样见[界面验证参考](docs/verification.md)。以脚本退出码为准，不能只看 `result.txt`。仓库目前没有独立文档检查脚本；文档改动需核对本地链接、图片、迁移内容与 Agent Note 格式。
+
+## 日期资源维护
+
+日期资源已包含在源码目录中，普通构建不需要下载。维护时运行：
+
+```sh
+python3 scripts/update-calendar-data.py
+```
+
+脚本需要网络和 `curl`，在 `.build/calendar-sources` 缓存原始表，检查每年 24 个节气、每月两个、全部公历日期连续且农历大小月和日序正确后更新资源。重新获取特定年份时可移除对应缓存文件。来源及版权声明见 [日期数据来源与版权声明](Sources/DayOrderCore/Resources/SOURCE.txt)。
+
+本次资源从天文台对照表的[公开存档](https://github.com/hungtcs/traditional-chinese-calendar-database)导入，并与 187 年可下载的官方原表逐日交叉核对。完整来源、校验和及尚未直连核对的年份记录在资源中。官网连接不稳定时，可下载固定存档后使用 `python3 scripts/update-calendar-data.py --archive <存档文件路径>`；校验和改变或与已有官方缓存不一致时脚本会拒绝更新。
