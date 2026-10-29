@@ -176,7 +176,7 @@ struct CalendarTimelineView: NSViewRepresentable {
                     let target = model.calendarScrollTarget
                     let distance = abs(table.visibleRect.minY - table.rect(ofRow: layout.weeks.lowerBound).minY)
                     let monthNavigation = model.calendarMonthNavigationTarget != nil
-                    let duration = distance < 0.5 ? 0 : monthNavigation ? 0.36 : min(0.45, 0.24 + distance / 6000)
+                    let duration = distance < 0.5 ? 0 : monthNavigation ? 0.36 : min(0.70, 0.45 + distance / 6000)
                     snapTask = Task { [weak self] in
                         guard let self else { return }
                         defer {
@@ -189,7 +189,7 @@ struct CalendarTimelineView: NSViewRepresentable {
                         }
                         await animateMonth(layout, duration: duration, serial: serial,
                                            requestedRevision: requestedRevision, selectionOnArrival: target,
-                                           startingSelection: startingSelection, easeOut: monthNavigation)
+                                           startingSelection: startingSelection, easeOut: true)
                     }
                 } else if let restoring, restoredMonth == nil {
                     moveViewport(to: table.rect(ofRow: timeline.weekRow(containing: restoring.date, inMonth: restoring.month)).minY + restoring.offset)

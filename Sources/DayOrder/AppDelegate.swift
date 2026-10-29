@@ -1636,10 +1636,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let startOffset = start - target
             var previousOffset = startOffset
             var samples: [Double] = []
+            let expectedDuration = min(0.70, 0.45 + abs(startOffset) / 6000)
+            var hasFastStart = false
+            var arrivalElapsed: Double?
             let began = ProcessInfo.processInfo.systemUptime
             try pressToday()
-            while ProcessInfo.processInfo.systemUptime - began < 0.8 {
+            while ProcessInfo.processInfo.systemUptime - began < 1.0 {
                 try await Task.sleep(for: .milliseconds(8))
+                if arrivalElapsed == nil, model.selection == model.today {
+                    arrivalElapsed = ProcessInfo.processInfo.systemUptime - began
+                }
                 let y = table.visibleRect.minY
                 // 原生列表实现远处行时会修正累计坐标，比较相对目标周行的距离。
                 let offset = y - table.rect(ofRow: targetRow).minY
@@ -1654,6 +1660,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                         throw CocoaError(.coderInvalidValue)
                     }
                     samples.append(offset)
+                    if ProcessInfo.processInfo.systemUptime - began < expectedDuration * 0.6,
+                       1 - offset / startOffset > 0.75 {
+                        hasFastStart = true
+                    }
                 }
                 previousOffset = offset
             }
@@ -1661,12 +1671,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 fputs("返回今天缺少连续中间位置，发生了直接跳转\n", stderr)
                 throw CocoaError(.coderInvalidValue)
             }
+            guard NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || hasFastStart else {
+                fputs("返回今天未采用与月份箭头一致的先快后缓减速\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+            guard NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+                    || (arrivalElapsed.map { $0 >= expectedDuration - 0.04 && $0 < 1.0 } == true) else {
+                fputs("返回今天的动画时长未落在预期范围\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
             guard abs(table.visibleRect.minY - table.rect(ofRow: targetRow).minY) < 1, model.selection == model.today,
                   model.calendarSnappedMonth == model.engine.monthStart(model.today) else {
                 fputs("返回今天未停在完整当月或未选中今天：来源=\(year)-\(month)，位置=\(table.visibleRect.minY)，初始目标=\(target)，当前目标=\(table.rect(ofRow: targetRow).minY)，选择=\(model.selection)，吸附=\(String(describing: model.calendarSnappedMonth))\n", stderr)
                 throw CocoaError(.coderInvalidValue)
             }
-            reports.append(["year": year, "month": month, "startOffset": startOffset, "offsets": samples])
+            reports.append(["year": year, "month": month, "startOffset": startOffset,
+                            "offsets": samples, "hasFastStart": hasFastStart,
+                            "arrivalElapsed": arrivalElapsed ?? -1])
         }
         try JSONSerialization.data(withJSONObject: reports, options: [.prettyPrinted, .sortedKeys])
             .write(to: directory.appendingPathComponent("today-scroll-motion.json"))
@@ -1703,7 +1724,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 case "year": model.openYearOverview()
                 default: popover.performClose(nil)
                 }
-                try await Task.sleep(for: .milliseconds(650))
+                try await Task.sleep(for: .milliseconds(850))
                 if interruption == "repeat" {
                     guard model.selection == model.today else { throw CocoaError(.coderInvalidValue) }
                 } else if interruption == "navigation" {
@@ -1863,7 +1884,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 case "year-pending", "year": model.openYearOverview()
                 default: try press("今天")
                 }
-                try await Task.sleep(for: .milliseconds(550))
+                try await Task.sleep(for: .milliseconds(interruption == "today" ? 850 : 550))
                 if interruption == "today" {
                     try assertArrival(model.today)
                 } else {
@@ -1927,7 +1948,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 }
                 NSApp.postEvent(event, atStart: false)
             }
-            try await Task.sleep(for: .milliseconds(400))
+            try await Task.sleep(for: .milliseconds(label == "今天" ? 850 : 400))
             try await waitForCalendarTransition()
         }
         let behavior = popover.behavior
