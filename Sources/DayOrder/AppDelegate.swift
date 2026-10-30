@@ -1869,13 +1869,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         service.status = .notFound
         launchAtLogin.refresh()
         try await Task.sleep(for: .milliseconds(400))
-        launchAtLogin.setEnabled(true)
-        guard !launchAtLogin.canChange, service.mutationCount == mutations,
-              try element("开机自启").isAccessibilityEnabled?() == false else {
+        guard launchAtLogin.canChange, service.mutationCount == mutations,
+              try element("开机自启").isAccessibilityEnabled?() == true else {
+            fputs("未找到登录项记录时，应允许用户主动尝试登记。\n", stderr)
             throw CocoaError(.coderInvalidValue)
         }
-        try await saveSnapshot("settings-login-unavailable", to: directory)
-        service.status = .notRegistered
+        try verifyLoginSwitch(false)
+        try await saveSnapshot("settings-login-not-found", to: directory)
+        try await press("开机自启")
+        try verifyLoginSwitch(true)
+        guard service.mutationCount == mutations + 1, launchAtLogin.status == .enabled else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        try await press("开机自启")
+        try verifyLoginSwitch(false)
+
+        // 登记失败也可能改变系统状态；刷新不能丢掉本次操作的错误。
+        service.registrationFailureStatus = .notFound
+        service.operationError = NSError(domain: "DayOrderSmoke", code: 2,
+                                         userInfo: [NSLocalizedDescriptionKey: "无法登记登录项，请检查应用签名。"])
+        let beforeFailure = service.mutationCount
+        for attempt in 1...2 {
+            try await press("开机自启")
+            try verifyLoginSwitch(false)
+            guard service.mutationCount == beforeFailure + attempt, launchAtLogin.status == .notFound,
+                  launchAtLogin.errorMessage?.contains("无法登记登录项，请检查应用签名。") == true else {
+                fputs("登记失败后应保留具体错误，并允许从未找到记录状态重试。\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+        }
+        try await saveSnapshot("settings-login-not-found-error", to: directory)
+        try await press("打开系统登录项设置")
+        guard service.settingsOpenCount == 2 else { throw CocoaError(.coderInvalidValue) }
+        service.operationError = nil
+        service.registrationFailureStatus = nil
+        service.registrationStatus = .requiresApproval
+        try await press("开机自启")
+        try verifyLoginSwitch(true)
+        guard launchAtLogin.status == .requiresApproval, launchAtLogin.errorMessage == nil,
+              service.mutationCount == beforeFailure + 3 else { throw CocoaError(.coderInvalidValue) }
+        try await saveSnapshot("settings-login-not-found-retry", to: directory)
+        try await press("开机自启")
+        try verifyLoginSwitch(false)
+        service.registrationStatus = .enabled
         launchAtLogin.refresh()
     }
 
