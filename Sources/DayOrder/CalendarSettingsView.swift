@@ -4,6 +4,7 @@ import SwiftUI
 
 struct CalendarSettingsView: View {
     @ObservedObject var model: CalendarModel
+    @ObservedObject var launchAtLogin: LaunchAtLogin
     @Binding var menuBarDisplay: String
     @Binding var menuBarDateFormat: String
     @Binding var appearance: String
@@ -19,6 +20,7 @@ struct CalendarSettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                generalSection
                 displaySection
                 calendarSection
                 holidaySection
@@ -30,6 +32,10 @@ struct CalendarSettingsView: View {
         .scrollIndicators(.never)
         .font(.system(size: 12))
         .controlSize(.small)
+        .onAppear { launchAtLogin.refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            launchAtLogin.refresh()
+        }
     }
 
     var header: some View {
@@ -47,6 +53,29 @@ struct CalendarSettingsView: View {
             .accessibilityLabel("返回日历")
         }
         .padding(12)
+    }
+
+    private var generalSection: some View {
+        group("通用") {
+            toggle("开机自启", isOn: Binding(get: { launchAtLogin.isOn }, set: { launchAtLogin.setEnabled($0) }))
+                .disabled(!launchAtLogin.canChange)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(launchAtLogin.explanation)
+                if let message = launchAtLogin.errorMessage {
+                    Text(message).foregroundStyle(.red)
+                }
+                if launchAtLogin.status == .requiresApproval || launchAtLogin.errorMessage != nil {
+                    Button("打开系统登录项设置") { launchAtLogin.openSystemSettings() }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.tint)
+                }
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 4)
+        }
     }
 
     private var displaySection: some View {
@@ -128,8 +157,10 @@ struct CalendarSettingsView: View {
     }
 
     private var about: some View {
-        DisclosureGroup {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        return DisclosureGroup {
             VStack(alignment: .leading, spacing: 6) {
+                Text("版本：\(version ?? "开发版本")")
                 Text("支持 1901–2100 年。农历和节气按中国历法日期标注；节日名称不代表法定休假。")
                 Text("农历与节气：香港天文台")
                 Text("放假与调休：holiday-cn")

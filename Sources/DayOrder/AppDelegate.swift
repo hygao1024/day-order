@@ -8,6 +8,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private let panel = CalendarPanel()
     private var model: CalendarModel?
+    private var launchAtLogin = LaunchAtLogin()
+    #if DEBUG
+    private var smokeLoginService: SmokeLoginService?
+    #endif
     private var refreshTimer: Timer?
     private var keyboardMonitor: Any?
     private var hostingController: NSHostingController<AnyView>?
@@ -18,12 +22,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             #if DEBUG
             let holidayCacheDirectory = smokeDirectory?.appendingPathComponent("holiday-cache", isDirectory: true)
+            if smokeDirectory != nil {
+                let service = SmokeLoginService()
+                smokeLoginService = service
+                launchAtLogin = service.makeController()
+            }
             #else
             let holidayCacheDirectory: URL? = nil
             #endif
             let model = CalendarModel(engine: try CalendarEngine(), holidayCacheDirectory: holidayCacheDirectory)
             self.model = model
-            let view = CalendarView(model: model, updateMenuBar: { [weak self] in self?.refresh() },
+            let view = CalendarView(model: model, launchAtLogin: launchAtLogin,
+                                    updateMenuBar: { [weak self] in self?.refresh() },
                                     updatePanelAppearance: { [weak self] in self?.panel.appearance = $0 }) {
                 [weak self] in self?.panel.performClose(nil)
             }
@@ -1780,6 +1790,93 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.showingSettings = true
         try await Task.sleep(for: .milliseconds(400))
         try await waitForCalendarTransition()
+        try scrollSettings(toBottom: false)
+        guard let service = smokeLoginService else { throw CocoaError(.coderInvalidValue) }
+        func verifyLoginSwitch(_ expected: Bool) throws {
+            let control = try element("开机自启") as? NSObject
+            let rawValue = control?.perform(NSSelectorFromString("accessibilityValue"))?.takeUnretainedValue()
+            let value = rawValue as? NSNumber
+            guard value?.boolValue == expected, launchAtLogin.isOn == expected else {
+                fputs("开机自启开关未反映系统登记状态：期望=\(expected)，控件=\(String(describing: rawValue))，登记=\(launchAtLogin.isOn)。\n", stderr)
+                throw CocoaError(.coderInvalidValue)
+            }
+        }
+        try verifyLoginSwitch(false)
+        try await press("开机自启")
+        try verifyLoginSwitch(true)
+        guard service.status == .enabled else { throw CocoaError(.coderInvalidValue) }
+        try await saveSnapshot("settings-login-enabled", to: directory)
+        try await press("开机自启")
+        try verifyLoginSwitch(false)
+        guard service.status == .notRegistered else { throw CocoaError(.coderInvalidValue) }
+
+        service.registrationStatus = .requiresApproval
+        try await press("开机自启")
+        try verifyLoginSwitch(true)
+        guard launchAtLogin.status == .requiresApproval else { throw CocoaError(.coderInvalidValue) }
+        try await saveSnapshot("settings-login-approval", to: directory)
+        try await press("打开系统登录项设置")
+        guard service.settingsOpenCount == 1 else { throw CocoaError(.coderInvalidValue) }
+        // 从系统设置返回时重新读取状态；也覆盖待批准登记的撤销。
+        service.status = .enabled
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)
+        try await Task.sleep(for: .milliseconds(400))
+        guard launchAtLogin.status == .enabled else { throw CocoaError(.coderInvalidValue) }
+        service.status = .requiresApproval
+        launchAtLogin.refresh()
+        try await Task.sleep(for: .milliseconds(400))
+        try await press("开机自启")
+        try verifyLoginSwitch(false)
+
+        service.operationError = NSError(domain: "DayOrderSmoke", code: 1,
+                                         userInfo: [NSLocalizedDescriptionKey: "系统拒绝了操作，请检查登录项权限。"])
+        try await press("开机自启")
+        try verifyLoginSwitch(false)
+        guard launchAtLogin.errorMessage != nil else { throw CocoaError(.coderInvalidValue) }
+        try await saveSnapshot("settings-login-error", to: directory)
+        service.operationError = nil
+        service.registrationStatus = .enabled
+        try await press("开机自启")
+        try verifyLoginSwitch(true)
+        guard launchAtLogin.errorMessage == nil else { throw CocoaError(.coderInvalidValue) }
+        service.operationError = CocoaError(.fileWriteNoPermission)
+        try await press("开机自启")
+        try verifyLoginSwitch(true)
+        guard launchAtLogin.errorMessage != nil else { throw CocoaError(.coderInvalidValue) }
+        service.operationError = nil
+        service.status = .notRegistered
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)
+        try await Task.sleep(for: .milliseconds(400))
+        try verifyLoginSwitch(false)
+        guard launchAtLogin.errorMessage == nil else { throw CocoaError(.coderInvalidValue) }
+
+        // 设置关闭期间发生的系统修改，应在下一次进入时反映到开关。
+        try await press("返回日历")
+        service.status = .enabled
+        model.showingSettings = true
+        try await Task.sleep(for: .milliseconds(400))
+        try await waitForCalendarTransition()
+        try verifyLoginSwitch(true)
+        try await press("开机自启")
+
+        let mutations = service.mutationCount
+        let unpackaged = service.makeController(isAppBundle: false)
+        unpackaged.setEnabled(true)
+        guard !unpackaged.canChange, service.mutationCount == mutations else {
+            fputs("非应用包入口不应写入系统登录项。\n", stderr)
+            throw CocoaError(.coderInvalidValue)
+        }
+        service.status = .notFound
+        launchAtLogin.refresh()
+        try await Task.sleep(for: .milliseconds(400))
+        launchAtLogin.setEnabled(true)
+        guard !launchAtLogin.canChange, service.mutationCount == mutations,
+              try element("开机自启").isAccessibilityEnabled?() == false else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        try await saveSnapshot("settings-login-unavailable", to: directory)
+        service.status = .notRegistered
+        launchAtLogin.refresh()
     }
 
     private func scrollSettings(toBottom: Bool) throws {
