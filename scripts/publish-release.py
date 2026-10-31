@@ -26,9 +26,11 @@ def release_state(tag: str):
     try:
         return json.loads(gh("api", f"repos/{REPOSITORY}/releases/tags/{tag}"))
     except subprocess.CalledProcessError as error:
-        if "HTTP 404" in error.stderr:
-            return None
-        raise
+        if "HTTP 404" not in error.stderr:
+            raise
+    # 标签查询不返回草稿；完整列表可查询当前令牌可见的草稿。
+    pages = json.loads(gh("api", f"repos/{REPOSITORY}/releases", "--paginate", "--slurp"))
+    return next((item for page in pages for item in page if item["tag_name"] == tag), None)
 
 
 def verified_assets(directory: Path, version: str) -> list[Path]:
@@ -81,7 +83,7 @@ def publish(tag: str, directory: Path) -> str:
             raise ValueError(f"远端附件校验失败，保留草稿：{path.name}")
     if prerelease:
         gh("release", "edit", tag, "--repo", REPOSITORY, "--draft=false", "--prerelease", "--latest=false")
-    return state["html_url"]
+    return f"https://github.com/{REPOSITORY}/releases/tag/{tag}" if prerelease else state["html_url"]
 
 
 def main() -> None:

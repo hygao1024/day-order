@@ -2,6 +2,7 @@
 
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -106,15 +107,23 @@ class PublishReleaseTests(unittest.TestCase):
                 if target.is_symlink():
                     target.unlink()
 
-    def test_only_http_404_means_release_absent(self):
+    def test_draft_is_found_when_tag_endpoint_returns_404(self):
+        draft = dict(tag_name="v1.0.0", draft=True, assets=[])
+        error = subprocess.CalledProcessError(1, ["gh"], stderr="Not Found (HTTP 404)")
+        with patch.object(release, "gh", side_effect=[error, json.dumps([[], [draft]])]):
+            self.assertEqual(release.release_state("v1.0.0"), draft)
+
+    def test_only_http_404_falls_back_to_release_list(self):
         for status in [404, 403, 500]:
             error = subprocess.CalledProcessError(1, ["gh"], stderr=f"error (HTTP {status})")
-            with self.subTest(status=status), patch.object(release, "gh", side_effect=error):
+            with self.subTest(status=status), patch.object(release, "gh", side_effect=[error, "[[]]"]) as gh:
                 if status == 404:
                     self.assertIsNone(release.release_state("v1.0.0"))
+                    self.assertEqual(gh.call_count, 2)
                 else:
                     with self.assertRaises(subprocess.CalledProcessError):
                         release.release_state("v1.0.0")
+                    self.assertEqual(gh.call_count, 1)
 
 
 if __name__ == "__main__":
