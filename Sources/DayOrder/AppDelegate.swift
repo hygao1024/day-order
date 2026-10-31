@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var smokeLoginService: SmokeLoginService?
     #endif
     private var refreshTimer: Timer?
+    private var isTerminating = false
     private var keyboardMonitor: Any?
     private var hostingController: NSHostingController<AnyView>?
     private var presentationController: CalendarPresentationController?
@@ -72,9 +73,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             refreshTimer?.tolerance = 5
             for name in [NSNotification.Name.NSCalendarDayChanged, .NSSystemTimeZoneDidChange,
                          NSNotification.Name("NSSystemClockDidChangeNotification")] {
-                NotificationCenter.default.addObserver(self, selector: #selector(refresh), name: name, object: nil)
+                NotificationCenter.default.addObserver(self, selector: #selector(refreshAfterNotification), name: name, object: nil)
             }
-            NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(refresh),
+            NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(refreshAfterNotification),
                                                               name: NSWorkspace.didWakeNotification, object: nil)
         } catch {
             let alert = NSAlert()
@@ -83,6 +84,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.addButton(withTitle: "退出")
             alert.runModal()
             NSApp.terminate(nil)
+        }
+    }
+
+    // 系统跨日通知可能在后台线程同步投递；进入主执行器前不能访问界面或模型。
+    @objc nonisolated private func refreshAfterNotification() {
+        Task { @MainActor [weak self] in
+            guard let self, !self.isTerminating else { return }
+            self.refresh()
         }
     }
 
@@ -167,13 +176,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        isTerminating = true
+        NotificationCenter.default.removeObserver(self)
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
         panel.close()
         presentationController?.cancelTransition()
         model?.cancelHolidayUpdate()
         refreshTimer?.invalidate()
         removeKeyboardMonitor()
-        NotificationCenter.default.removeObserver(self)
-        NSWorkspace.shared.notificationCenter.removeObserver(self)
         if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
     }
 
@@ -192,6 +202,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             guard let model else { throw CocoaError(.coderInvalidValue) }
+            if ProcessInfo.processInfo.arguments.contains("--refresh-notifications-smoke") {
+                try await verifyRefreshNotifications()
+                try "主线程及后台线程的跨日、时区、时钟与唤醒通知刷新验证通过。\n"
+                    .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+                return
+            }
             model.today = model.engine.date(2026, 10, 23)
             model.select(model.today)
             defaults.set("light", forKey: "appearance")
@@ -399,6 +416,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try await saveSnapshot("blur-on-year-light", to: directory)
             model.showingYearOverview = false
             try await saveSnapshot("blur-on-restored-light", to: directory)
+            try await verifyRefreshNotifications()
             panel.performClose(nil)
             guard !panel.isShown, keyboardMonitor == nil else { throw CocoaError(.coderInvalidValue) }
             try "真实状态栏弹窗、连续周滚动与跨月选择、滚动位置恢复、辅助功能动作、外观与节日快照、年概览导航、日期边界、关闭清理通过。\n"
@@ -407,6 +425,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             fputs("日序冒烟验证失败：\(error)\n", stderr)
             exit(1)
+        }
+    }
+
+    private func verifyRefreshNotifications() async throws {
+        guard let model, let button = statusItem?.button else { throw CocoaError(.coderInvalidValue) }
+        let notifications: [(NotificationCenter, Notification.Name)] = [
+            (.default, .NSCalendarDayChanged),
+            (.default, .NSSystemTimeZoneDidChange),
+            (.default, Notification.Name("NSSystemClockDidChangeNotification")),
+            (NSWorkspace.shared.notificationCenter, NSWorkspace.didWakeNotification)
+        ]
+        defaults.set(MenuBarDisplay.dateOnly.rawValue, forKey: "menuBarDisplay")
+        defaults.set(MenuBarDateFormat.yearMonthDayWeekday.rawValue, forKey: "menuBarDateFormat")
+        defer {
+            defaults.removeObject(forKey: "menuBarDisplay")
+            defaults.removeObject(forKey: "menuBarDateFormat")
+            refresh()
+        }
+        for (center, name) in notifications {
+            for background in [true, false] {
+                for followingToday in [true, false] {
+                    let today = model.engine.today()
+                    let yesterday = model.engine.addingDays(-1, to: today)
+                    let browsingDate = model.engine.addingDays(-7, to: today)
+                    model.today = yesterday
+                    model.select(followingToday ? yesterday : browsingDate)
+                    updateStatusItem()
+                    if background {
+                        await Task.detached {
+                            precondition(!Thread.isMainThread)
+                            center.post(name: name, object: nil)
+                        }.value
+                    } else {
+                        center.post(name: name, object: nil)
+                    }
+                    let began = ProcessInfo.processInfo.systemUptime
+                    while model.today != today, ProcessInfo.processInfo.systemUptime - began < 2 {
+                        try await Task.sleep(for: .milliseconds(10))
+                    }
+                    let expectedTitle = MenuBarDateFormat.yearMonthDayWeekday.title(for: model.engine.info(for: today))
+                    guard model.today == today,
+                          model.selection == (followingToday ? today : browsingDate),
+                          button.title == expectedTitle else {
+                        fputs("通知刷新未更新日期和菜单栏，或覆盖浏览选择：\(name.rawValue)，后台=\(background)，跟随今天=\(followingToday)\n", stderr)
+                        throw CocoaError(.coderInvalidValue)
+                    }
+                }
+            }
         }
     }
 
