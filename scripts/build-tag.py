@@ -44,6 +44,36 @@ def verify_app(app: Path, version: str, number: str) -> None:
     run("/usr/bin/codesign", "--verify", "--deep", "--strict", app)
 
 
+def verify_dmg(image: Path, version: str, number: str) -> None:
+    run("/usr/bin/hdiutil", "verify", image)
+    with tempfile.TemporaryDirectory(prefix="dayorder-mount-") as temporary:
+        mount = Path(temporary) / "volume"
+        mount.mkdir()
+        try:
+            run("/usr/bin/hdiutil", "attach", image, "-readonly", "-nobrowse", "-mountpoint", mount)
+            verify_app(mount / "DayOrder.app", version, number)
+            shortcut = mount / "Applications"
+            if not shortcut.is_symlink() or shortcut.readlink() != Path("/Applications"):
+                raise ValueError("DMG 必须包含指向 /Applications 的安装快捷入口。")
+        finally:
+            # 即使挂载后的检查失败，也只卸载本次创建的挂载点。
+            if mount.is_mount():
+                try:
+                    run("/usr/bin/hdiutil", "detach", mount)
+                except subprocess.CalledProcessError:
+                    run("/usr/bin/hdiutil", "detach", "-force", mount)
+
+
+def create_dmg(app: Path, image: Path, version: str, number: str) -> None:
+    with tempfile.TemporaryDirectory(prefix="dayorder-dmg-") as temporary:
+        contents = Path(temporary)
+        run("/usr/bin/ditto", app, contents / "DayOrder.app")
+        (contents / "Applications").symlink_to("/Applications", target_is_directory=True)
+        run("/usr/bin/hdiutil", "create", "-volname", "DayOrder", "-srcfolder", contents,
+            "-fs", "HFS+", "-format", "UDZO", image)
+    verify_dmg(image, version, number)
+
+
 def build(tag: str) -> Path:
     version = version_from_tag(tag)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
@@ -73,8 +103,11 @@ def build(tag: str) -> Path:
         with tempfile.TemporaryDirectory(prefix="dayorder-unpack-") as extracted:
             run("/usr/bin/ditto", "-x", "-k", archive, extracted)
             verify_app(Path(extracted) / "DayOrder.app", version, number)
-        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-        (staging / f"{archive.name}.sha256").write_text(f"{digest}  {archive.name}\n")
+        image = staging / f"DayOrder-{version}-arm64.dmg"
+        create_dmg(app, image, version, number)
+        for package in [archive, image]:
+            digest = hashlib.sha256(package.read_bytes()).hexdigest()
+            (staging / f"{package.name}.sha256").write_text(f"{digest}  {package.name}\n")
         staging.rename(destination)
     return destination
 

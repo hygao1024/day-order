@@ -6,7 +6,9 @@
 
 ## 快速开始
 
-环境要求：**Apple 芯片 Mac、macOS 14+、Swift 6.0+**，安装 Xcode 或 Command Line Tools（命令行开发工具）。首次构建需要联网下载 Sparkle（自动更新框架）。
+安装使用：从 [GitHub Releases](https://github.com/hygao1024/day-order/releases) 下载 ARM64 的 DMG，打开后将应用拖入“应用程序”。要求 Apple 芯片 Mac 和 macOS 14+；预发布版本不进入自动更新渠道。
+
+从源码构建：**Apple 芯片 Mac、macOS 14+、Swift 6.0+**，安装 Xcode 或 Command Line Tools（命令行开发工具）。首次构建需要联网下载 Sparkle（自动更新框架）。
 
 在仓库根目录执行：
 
@@ -69,5 +71,5 @@ open build/DayOrder.app
 - [日历行为与数据参考](docs/calendar-reference.md)：界面交互、日期规则与数据边界。
 - [界面验证参考](docs/verification.md)：真实应用截图、专项检查及其覆盖范围。
 - [软件更新与发布](docs/app-updates.md)：更新开关、签名密钥、ARM64 打包与正式版本发布。
-- [标签自动构建](docs/app-updates.md#标签自动构建)：推送版本标签后生成 macOS ARM64 安装包，在 Actions 页面下载。
+- [标签自动构建](docs/app-updates.md#标签自动构建)：推送版本标签后生成 macOS ARM64 安装包，在 Release 页面下载 DMG 或 ZIP。
 - [Agent Notes（决策记录）规则](.agents/notes/README.md)：设计取舍的记录与维护方式。

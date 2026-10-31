@@ -40,7 +40,7 @@ jobs:
 
       - name: 测试打包边界与日期逻辑
         run: |
-          python3 -m unittest discover -s scripts/tests -p 'test_tag_build.py'
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py'
           swift test --arch arm64
 
       - name: 构建并校验 ARM64 安装包
@@ -54,3 +54,29 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      DAYORDER_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: 检出标签发布脚本
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ env.DAYORDER_TAG }}
+          persist-credentials: false
+
+      - name: 下载已验证安装包
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: DayOrder-${{ env.DAYORDER_TAG }}-arm64
+          path: build/release-assets
+
+      - name: 上传 Release 附件并公开预发布版本
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/publish-release.py "$DAYORDER_TAG" build/release-assets

@@ -50,33 +50,48 @@ git push origin v1.0.0-alpha.06
 
 工作流使用 GitHub 官方 `macos-15` ARM64 执行环境，检查架构、运行打包边界测试与 `swift test --arch arm64`，再通过 `scripts/build-tag.py` 调用已有发布构建入口。应用显示版本来自标签（去掉 `v`），构建号为该提交完整历史的提交数；浅克隆会被拒绝，同一提交重新运行不会改变构建号。此编号沿同一分支向前提交时增长，不保证不同分支或较旧提交的编号更大；转为正式自动更新发布前仍须确认构建号高于已发布版本。
 
-构建完成后，在对应 Actions（自动化运行）页面的 Artifacts（构建产物）区域下载 `DayOrder-<tag>-arm64`，其中包括：
+构建完成后，可在 [GitHub Releases](https://github.com/hygao1024/day-order/releases) 下载对应版本的 Assets（附件）。Actions（自动化运行）页面也保留名为 `DayOrder-<tag>-arm64` 的 Artifacts（构建产物）30 天。两处包含相同的四个文件：
 
-- `DayOrder-<version>-arm64.zip`：完整应用包，保留框架符号链接与可执行权限；上传前解压并重新核对版本、arm64 主程序及完整应用签名。
-- 对应的 `.zip.sha256`：ZIP 文件的 SHA-256 校验值，可在同一目录用 `shasum -a 256 -c <文件名>.zip.sha256` 检查。
+- `DayOrder-<version>-arm64.dmg`：打开后将 `DayOrder.app` 拖入“应用程序”快捷入口。
+- `DayOrder-<version>-arm64.zip`：完整应用包，保留框架符号链接与可执行权限。
+- 对应的 `.dmg.sha256` 和 `.zip.sha256`：在同一目录执行 `shasum -a 256 -c <文件名>.sha256` 检查。
 
-产物保留 30 天。工作流只需仓库读取权限，不需要配置 Secrets（机密变量），不创建 Release，不生成 `appcast.xml`，也不持有 Sparkle 私钥。ZIP 采用本地临时代码签名，未经过 Developer ID 签名或公证；它不会被现有自动更新源发现。Alpha/beta/rc 标签可以构建供手动测试，但不会进入正式更新渠道。
+打包时解压 ZIP，并只读挂载 DMG，核对应用版本、arm64 主程序、完整代码签名及 DMG 的安装快捷入口；检查结束或失败后卸载本次挂载点。全部成功才交付产物。
 
-可在 Apple 芯片 Mac 上运行相同的构建打包入口进行验证，不会创建 Git 标签或上传产物：
+构建任务仅有仓库读取权限，独立发布任务使用 GitHub 自动提供的令牌和 `contents: write` 权限，无需配置 Secrets（机密变量）。`scripts/publish-release.py` 先创建草稿，上传并核对四个远端附件的 SHA-256 摘要，然后按标签分类：
+
+- alpha/beta/rc 自动公开为 Pre-release（预发布），不设为 Latest（最新版本），供手动安装测试。
+- 正式版本保留为 Draft（草稿），等待发布者补齐与 ZIP 匹配的签名 `appcast.xml` 后手动公开并设为 Latest，避免破坏现有自动更新源。
+
+工作流不持有 Sparkle 私钥，不生成更新清单。应用仍采用临时代码签名，未经过 Developer ID 签名或公证。
+
+可在 Apple 芯片 Mac 上运行相同的构建打包入口，不会创建 Git 标签或上传产物：
 
 ```sh
-python3 scripts/build-tag.py v1.0.0-alpha.06
+python3 scripts/build-tag.py v1.0.0-alpha.08
 ```
 
-结果位于 `build/tag-artifacts/<tag>/`；已存在的同标签目录会被拒绝，避免误用残留文件。失败时不会上传部分产物；云端可从失败的运行页面重新运行。完整图形界面和真实安装回归仍使用[界面验证参考](verification.md)的本机入口，云端构建成功不代表这些检查通过。
+结果位于 `build/tag-artifacts/<tag>/`；已存在的同标签目录会被拒绝。失败不会交付部分本地产物；上传中断会保留草稿，可重跑恢复；已补入 `appcast.xml` 的草稿拒绝重新上传，避免使签名失效。已公开 Release 拒绝覆盖附件，应使用新版本标签；重新构建仍可取得 Actions 产物，但发布步骤会拒绝修改该公开版本。旧标签检出旧版脚本，不会获得新增 DMG 能力，应创建指向新提交的标签。
+
+完整图形界面和真实安装回归仍使用[界面验证参考](verification.md)的本机入口，云端构建成功不代表这些检查通过。
 
 ## 生成和发布正式版本
 
-1. 在 `scripts/build-app.sh` 将显示版本改为 `X.Y.Z`，将构建号改为高于所有已发布版本的正整数。alpha/beta 不进入正式更新源。
-2. 构建并完成对应验证：
+标签构建方式：
+
+1. 确认正式标签对应的提交构建号高于所有已发布版本，推送 `vX.Y.Z`，等待工作流生成包含 ZIP、DMG 和校验文件的 Release 草稿。
+2. 在持有原签名私钥的 Mac 上下载草稿中的 ZIP 和 `.zip.sha256` 到一个新的空目录，核对校验值。使用项目已下载的 Sparkle 工具对该原始 ZIP 生成签名更新清单，不重新打包 ZIP：
 
    ```sh
-   ./scripts/build-app.sh
-   python3 scripts/package-release.py
+   (cd /绝对路径/发布目录 && shasum -a 256 -c DayOrder-X.Y.Z-arm64.zip.sha256)
+   .build/artifacts/sparkle/Sparkle/bin/generate_appcast --account com.dayorder.calendar --maximum-deltas 0 --download-url-prefix https://github.com/hygao1024/day-order/releases/download/vX.Y.Z/ /绝对路径/发布目录
+   .build/artifacts/sparkle/Sparkle/bin/sign_update --account com.dayorder.calendar --verify /绝对路径/发布目录/appcast.xml
    ```
 
-3. 检查 `build/releases/vX.Y.Z/` 下的 `DayOrder-X.Y.Z-arm64.zip` 和 `appcast.xml`。脚本验证应用标识、更新源、公钥、主程序架构和代码签名，生成并复验清单与 ZIP 签名；已存在的输出目录不会被覆盖。
-4. 在 GitHub 为对应代码提交创建标签 `vX.Y.Z`，以 Draft 创建 Release，上传以上两个文件，确认附件完整后发布为正式版本并设为 Latest（最新版本）。不要将预发布版本设为正式版；不要在发布后修改 ZIP 或清单。脚本仅生成本地产物，不创建标签或发布 Release。
+   在仓库根目录执行，将示例中的 `X.Y.Z` 和目录替换为真实值。生成前确认钥匙串公钥与 `Assets/UpdatePublicKey.pub` 相同，并检查清单中的版本、构建号、下载地址和 ZIP 签名。
+3. 将 `appcast.xml` 上传至同一草稿，确认安装验证通过、附件完整，再公开为正式版本并设为 Latest。不要在发布后修改 ZIP、DMG 或清单。
+
+手动本地发布仍可先在 `scripts/build-app.sh` 设置正式版本与递增构建号，执行 `./scripts/build-app.sh` 和 `python3 scripts/package-release.py`。此入口检查应用配置与密钥匹配，生成并复验 ZIP 和清单签名，输出至 `build/releases/vX.Y.Z/`，已有目录拒绝覆盖；它不生成 DMG、不创建标签或上传 Release。不要混用此入口重新打包的 ZIP 与另一份 ZIP 的签名清单。
 
 清单内的下载地址包含 `vX.Y.Z`，因此 Release 标签必须匹配。每个正式 Release 都必须包含清单，不能只上传 ZIP。旧版本通过固定的 `latest/download/appcast.xml` 地址获取新版本。
 
