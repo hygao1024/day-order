@@ -81,7 +81,7 @@ git diff --check
 
 真实界面验证需要已登录的 macOS 图形会话，使用隔离偏好与缓存。普通冒烟不联网；详细覆盖、专项参数、联网验证和性能采样见[界面验证参考](docs/verification.md)。以脚本退出码为准，不能只看 `result.txt`。仓库目前没有独立文档检查脚本；文档改动需核对本地链接、图片、迁移内容与 Agent Note 格式。
 
-软件更新的签名、ARM64 发布打包和真实安装验证见[软件更新与发布](docs/app-updates.md)。
+软件更新的签名、ARM64 发布打包和真实安装验证见[软件更新与发布](docs/app-updates.md)。版本标签的云端构建使用 `.github/workflows/build-tag.yml` 和 `scripts/build-tag.py`，触发条件、产物下载及本地复现见[标签自动构建](docs/app-updates.md#标签自动构建)。
 
 ## 日期资源维护
 

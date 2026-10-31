@@ -69,4 +69,5 @@ open build/DayOrder.app
 - [日历行为与数据参考](docs/calendar-reference.md)：界面交互、日期规则与数据边界。
 - [界面验证参考](docs/verification.md)：真实应用截图、专项检查及其覆盖范围。
 - [软件更新与发布](docs/app-updates.md)：更新开关、签名密钥、ARM64 打包与正式版本发布。
+- [标签自动构建](docs/app-updates.md#标签自动构建)：推送版本标签后生成 macOS ARM64 安装包，在 Actions 页面下载。
 - [Agent Notes（决策记录）规则](.agents/notes/README.md)：设计取舍的记录与维护方式。

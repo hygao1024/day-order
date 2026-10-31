@@ -35,6 +35,34 @@
 
 `./scripts/build-app.sh` 固定构建 arm64 主程序、嵌入 Sparkle 框架及其许可证，并检查整个应用包的签名。Sparkle 框架包含上游的通用架构辅助程序；产品主程序和更新适用范围仅为 arm64。当前应用采用临时签名，更新签名不能代替 Apple 的 Developer ID 签名或公证，也不保证首次下载免于系统拦截。
 
+## 标签自动构建
+
+将包含 `.github/workflows/build-tag.yml` 的提交推送到 GitHub 后，推送 `v*` 标签会触发“macOS ARM64 标签构建”。仅在本地创建标签不会触发；标签必须指向已经包含该工作流的提交。
+
+支持 `vX.Y.Z` 及 `vX.Y.Z-alpha.N`、`-beta.N`、`-rc.N`，例如：
+
+```sh
+git tag v1.0.0-alpha.06
+git push origin v1.0.0-alpha.06
+```
+
+工作流使用 GitHub 官方 `macos-15` ARM64 执行环境，检查架构、运行打包边界测试与 `swift test --arch arm64`，再通过 `scripts/build-tag.py` 调用已有发布构建入口。应用显示版本来自标签（去掉 `v`），构建号为该提交完整历史的提交数；浅克隆会被拒绝，同一提交重新运行不会改变构建号。此编号沿同一分支向前提交时增长，不保证不同分支或较旧提交的编号更大；转为正式自动更新发布前仍须确认构建号高于已发布版本。
+
+构建完成后，在对应 Actions（自动化运行）页面的 Artifacts（构建产物）区域下载 `DayOrder-<tag>-arm64`，其中包括：
+
+- `DayOrder-<version>-arm64.zip`：完整应用包，保留框架符号链接与可执行权限；上传前解压并重新核对版本、arm64 主程序及完整应用签名。
+- 对应的 `.zip.sha256`：ZIP 文件的 SHA-256 校验值，可在同一目录用 `shasum -a 256 -c <文件名>.zip.sha256` 检查。
+
+产物保留 30 天。工作流只需仓库读取权限，不需要配置 Secrets（机密变量），不创建 Release，不生成 `appcast.xml`，也不持有 Sparkle 私钥。ZIP 采用本地临时代码签名，未经过 Developer ID 签名或公证；它不会被现有自动更新源发现。Alpha/beta/rc 标签可以构建供手动测试，但不会进入正式更新渠道。
+
+可在 Apple 芯片 Mac 上运行相同的构建打包入口进行验证，不会创建 Git 标签或上传产物：
+
+```sh
+python3 scripts/build-tag.py v1.0.0-alpha.06
+```
+
+结果位于 `build/tag-artifacts/<tag>/`；已存在的同标签目录会被拒绝，避免误用残留文件。失败时不会上传部分产物；云端可从失败的运行页面重新运行。完整图形界面和真实安装回归仍使用[界面验证参考](verification.md)的本机入口，云端构建成功不代表这些检查通过。
+
 ## 生成和发布正式版本
 
 1. 在 `scripts/build-app.sh` 将显示版本改为 `X.Y.Z`，将构建号改为高于所有已发布版本的正整数。alpha/beta 不进入正式更新源。
