@@ -58,7 +58,7 @@ git push origin v1.0.0-alpha.06
 
 打包时解压 ZIP，并只读挂载 DMG，核对应用版本、arm64 主程序、完整代码签名及 DMG 的安装快捷入口；检查结束或失败后卸载本次挂载点。全部成功才交付产物。
 
-构建任务仅有仓库读取权限，独立发布任务使用 GitHub 自动提供的令牌和 `contents: write` 权限，无需配置 Secrets（机密变量）。`scripts/publish-release.py` 先创建草稿，上传并核对四个远端附件的 SHA-256 摘要，然后按标签分类：
+构建任务仅有仓库读取权限，独立发布任务使用 GitHub 自动提供的令牌和 `contents: write` 权限，无需配置 Secrets（机密变量）。`scripts/publish-release.py` 先创建草稿，最多等待 60 秒使草稿可查询，再上传并核对四个远端附件的 SHA-256 摘要，然后按标签分类：
 
 - alpha/beta/rc 自动公开为 Pre-release（预发布），不设为 Latest（最新版本），供手动安装测试。
 - 正式版本保留为 Draft（草稿），等待发布者补齐与 ZIP 匹配的签名 `appcast.xml` 后手动公开并设为 Latest，避免破坏现有自动更新源。

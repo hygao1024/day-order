@@ -44,6 +44,22 @@ class PublishReleaseTests(unittest.TestCase):
         self.assertIn("--prerelease", calls[-1])
         self.assertIn("--latest=false", calls[-1])
 
+    def test_new_draft_visibility_delay_is_retried(self):
+        state = self.state(self.assets("1.0.0-alpha.08"))
+        with patch.object(release, "release_state", side_effect=[None, None, None, state, state]), \
+                patch.object(release.time, "sleep") as sleep, patch.object(release, "gh") as gh:
+            release.publish("v1.0.0-alpha.08", self.directory)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertEqual(gh.call_args_list[-1].args[:2], ("release", "edit"))
+
+    def test_invisible_draft_times_out_without_upload(self):
+        self.assets("1.0.0-alpha.08")
+        with patch.object(release, "release_state", return_value=None), \
+                patch.object(release.time, "monotonic", side_effect=[0, 61]), patch.object(release, "gh") as gh:
+            with self.assertRaisesRegex(ValueError, "超时"):
+                release.publish("v1.0.0-alpha.08", self.directory)
+        self.assertEqual([call.args[:2] for call in gh.call_args_list], [("release", "create")])
+
     def test_stable_release_stays_draft(self):
         assets = self.assets("1.0.0")
         state = self.state(assets)

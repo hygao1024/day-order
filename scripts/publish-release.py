@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 
 ROOT = Path(__file__).resolve().parent.parent
 REPOSITORY = "hygao1024/day-order"
@@ -67,8 +68,15 @@ def publish(tag: str, directory: Path) -> str:
                f"--prerelease={str(prerelease).lower()}", "--latest=false", "--title", f"日序 {version}",
                "--notes-file", str(path))
     # 只更新未公开草稿中的同名文件；中断后可重跑，公开版本保持不可变。
+    deadline = time.monotonic() + 60
     state = release_state(tag)
-    if state is None or not state["draft"]:
+    while state is None and time.monotonic() < deadline:
+        # GitHub 新建草稿的列表可见性存在延迟；只重试尚不可见，不忽略权限错误或公开状态。
+        time.sleep(5)
+        state = release_state(tag)
+    if state is None:
+        raise ValueError("等待草稿可见超时，未上传附件；请稍后重跑发布任务。")
+    if not state["draft"]:
         raise ValueError("上传前 Release 状态已改变，停止修改。")
     if any(asset["name"] == "appcast.xml" for asset in state["assets"]):
         raise ValueError("草稿已包含签名更新清单，拒绝替换安装包；请先确认发布状态。")
