@@ -4,22 +4,31 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 已存在的版本标签，例如 v1.0.0-alpha.06
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: tag-build-${{ github.ref }}
+  group: tag-build-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   build:
     runs-on: macos-15
     timeout-minutes: 30
+    env:
+      DAYORDER_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: 检出标签与完整历史
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: refs/tags/${{ env.DAYORDER_TAG }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -35,15 +44,13 @@ jobs:
           swift test --arch arm64
 
       - name: 构建并校验 ARM64 安装包
-        env:
-          DAYORDER_TAG: ${{ github.ref_name }}
         run: python3 scripts/build-tag.py "$DAYORDER_TAG"
 
       - name: 上传安装包和校验值
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: DayOrder-${{ github.ref_name }}-arm64
-          path: build/tag-artifacts/${{ github.ref_name }}/
+          name: DayOrder-${{ env.DAYORDER_TAG }}-arm64
+          path: build/tag-artifacts/${{ env.DAYORDER_TAG }}/
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
