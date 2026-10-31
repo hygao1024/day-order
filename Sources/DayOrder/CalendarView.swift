@@ -5,6 +5,7 @@ import SwiftUI
 struct CalendarView: View {
     @ObservedObject var model: CalendarModel
     let launchAtLogin: LaunchAtLogin
+    let appUpdater: AppUpdater
     @AppStorage("showTraditional") private var showTraditional = true
     @AppStorage("showCivil") private var showCivil = true
     @AppStorage("showWestern") private var showWestern = true
@@ -183,7 +184,7 @@ struct CalendarView: View {
     }
 
     private var settings: CalendarSettingsView {
-        CalendarSettingsView(model: model, launchAtLogin: launchAtLogin,
+        CalendarSettingsView(model: model, launchAtLogin: launchAtLogin, appUpdater: appUpdater,
                              menuBarDisplay: $menuBarDisplay, menuBarDateFormat: $menuBarDateFormat,
                              appearance: $appearance, blurEnabled: $blurEnabled, firstWeekday: $firstWeekday,
                              showTraditional: $showTraditional, showCivil: $showCivil,

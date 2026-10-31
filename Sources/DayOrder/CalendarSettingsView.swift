@@ -5,6 +5,7 @@ import SwiftUI
 struct CalendarSettingsView: View {
     @ObservedObject var model: CalendarModel
     @ObservedObject var launchAtLogin: LaunchAtLogin
+    @ObservedObject var appUpdater: AppUpdater
     @Binding var menuBarDisplay: String
     @Binding var menuBarDateFormat: String
     @Binding var appearance: String
@@ -24,6 +25,7 @@ struct CalendarSettingsView: View {
                 displaySection
                 calendarSection
                 holidaySection
+                updateSection
                 about
             }
             .padding(.vertical, 16)
@@ -152,6 +154,40 @@ struct CalendarSettingsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, 4)
                 }
+            }
+        }
+    }
+
+    private var updateSection: some View {
+        group("软件更新") {
+            toggle("自动检查更新", isOn: Binding(get: { appUpdater.automaticallyChecks },
+                                               set: { appUpdater.setAutomaticallyChecks($0) }))
+                .disabled(!appUpdater.isAvailable)
+            separator
+            toggle("自动下载并安装", isOn: Binding(get: { appUpdater.automaticallyInstalls },
+                                               set: { appUpdater.setAutomaticallyInstalls($0) }))
+                .disabled(!appUpdater.isAvailable || !appUpdater.automaticallyChecks)
+            Text("仅更新正式版本。开启自动安装后，后台下载并在退出时安装，也可选择立即安装并重启。")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 6)
+            row("GitHub · Apple 芯片") {
+                Button { appUpdater.checkForUpdates() } label: {
+                    Text("检查更新…")
+                        .padding(.horizontal, 8)
+                        .frame(height: 24)
+                }
+                    .buttonStyle(SettingsCapsuleButtonStyle())
+                    .disabled(!appUpdater.canCheck)
+                    .accessibilityLabel("检查软件更新")
+            }
+            if let message = appUpdater.message {
+                Text(message)
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 4)
             }
         }
     }

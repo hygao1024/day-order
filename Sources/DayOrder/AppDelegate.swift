@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let panel = CalendarPanel()
     private var model: CalendarModel?
     private var launchAtLogin = LaunchAtLogin()
+    private var appUpdater = AppUpdater(enabled: false)
     #if DEBUG
     private var smokeLoginService: SmokeLoginService?
     #endif
@@ -20,8 +21,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        #if DEBUG
+        appUpdater = AppUpdater(enabled: smokeDirectory == nil)
+        #else
+        appUpdater = AppUpdater()
+        #endif
         do {
             #if DEBUG
+            if smokeDirectory != nil, ProcessInfo.processInfo.arguments.contains("--updates-smoke") {
+                guard let path = ProcessInfo.processInfo.environment["DAYORDER_UPDATE_TEST_BUNDLE"],
+                      let bundle = Bundle(path: path),
+                      bundle.bundleIdentifier?.hasPrefix("com.dayorder.update-test.") == true else {
+                    throw CocoaError(.coderInvalidValue)
+                }
+                UserDefaults(suiteName: bundle.bundleIdentifier!)?.set(Date(), forKey: "SULastCheckTime")
+                appUpdater = AppUpdater(bundle: bundle)
+            }
             let holidayCacheDirectory = smokeDirectory?.appendingPathComponent("holiday-cache", isDirectory: true)
             if smokeDirectory != nil {
                 let service = SmokeLoginService()
@@ -33,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             #endif
             let model = CalendarModel(engine: try CalendarEngine(), holidayCacheDirectory: holidayCacheDirectory)
             self.model = model
-            let view = CalendarView(model: model, launchAtLogin: launchAtLogin,
+            let view = CalendarView(model: model, launchAtLogin: launchAtLogin, appUpdater: appUpdater,
                                     updateMenuBar: { [weak self] in self?.refresh() },
                                     updatePanelAppearance: { [weak self] in self?.panel.appearance = $0 }) {
                 [weak self] in self?.panel.performClose(nil)
@@ -218,6 +233,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // showPanel 会刷新真实日期；快照随后固定时钟，使用同一生产视图。
             model.today = model.engine.date(2026, 10, 23)
             model.select(model.today)
+            if ProcessInfo.processInfo.arguments.contains("--updates-smoke") {
+                try await verifyAppUpdates(directory: directory)
+                try "更新偏好、真实设置控件和 Sparkle 检查验证通过。\n"
+                    .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.arguments.contains("--panel-position-smoke") {
                 try await verifyPanelPosition(directory: directory)
                 try "面板切月、日期详情与月年过渡的顶部定位验证通过。\n"
@@ -1689,6 +1711,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try await waitForCalendarTransition()
         try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
             .write(to: directory.appendingPathComponent("settings-transition-motion.json"))
+    }
+
+    private func verifyAppUpdates(directory: URL) async throws {
+        guard let model, let view = hostingController?.view, appUpdater.isAvailable,
+              !appUpdater.automaticallyChecks, !appUpdater.automaticallyInstalls else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        model.showingSettings = true
+        try await Task.sleep(for: .milliseconds(500))
+        try await waitForCalendarTransition()
+        try scrollSettings(toBottom: true)
+        func element(_ label: String) throws -> AnyObject {
+            func find(_ node: AnyObject) -> AnyObject? {
+                if node.accessibilityLabel?() == label { return node }
+                for child in node.accessibilityChildren?() ?? [] {
+                    if let result = find(child as AnyObject) { return result }
+                }
+                return nil
+            }
+            guard let result = find(view) else { throw CocoaError(.coderInvalidValue) }
+            return result
+        }
+        func press(_ label: String) async throws {
+            guard try element(label).accessibilityPerformPress?() == true else {
+                throw CocoaError(.coderInvalidValue)
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        guard try element("自动下载并安装").isAccessibilityEnabled?() == false else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        appUpdater.setAutomaticallyInstalls(true)
+        guard !appUpdater.automaticallyInstalls else { throw CocoaError(.coderInvalidValue) }
+        try await press("自动检查更新")
+        try await press("自动下载并安装")
+        guard appUpdater.automaticallyChecks, appUpdater.automaticallyInstalls,
+              let path = ProcessInfo.processInfo.environment["DAYORDER_UPDATE_TEST_BUNDLE"],
+              let bundle = Bundle(path: path), let identifier = bundle.bundleIdentifier,
+              let stored = UserDefaults(suiteName: identifier),
+              stored.bool(forKey: "SUEnableAutomaticChecks"), stored.bool(forKey: "SUAutomaticallyUpdate") else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        for appearance in ["light", "dark"] {
+            defaults.set(appearance, forKey: "appearance")
+            try await saveSnapshot("settings-updates-\(appearance)", to: directory)
+        }
+        try await press("自动检查更新")
+        guard !appUpdater.automaticallyChecks, !appUpdater.automaticallyInstalls,
+              !stored.bool(forKey: "SUEnableAutomaticChecks"), !stored.bool(forKey: "SUAutomaticallyUpdate") else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        appUpdater.checkForUpdateInformation()
+        let deadline = Date().addingTimeInterval(20)
+        while appUpdater.message == nil || appUpdater.isBusy {
+            guard Date() < deadline else { throw CocoaError(.coderInvalidValue) }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let expected = ProcessInfo.processInfo.environment["DAYORDER_UPDATE_TEST_EXPECTED"] ?? "发现新版本"
+        guard appUpdater.message?.contains(expected) == true, appUpdater.canCheck else {
+            fputs("更新检查结果不符：\(appUpdater.message ?? "nil")\n", stderr)
+            throw CocoaError(.coderInvalidValue)
+        }
+        try await saveSnapshot("settings-updates-result", to: directory)
     }
 
     private func verifySettingsDesign(directory: URL) async throws {
