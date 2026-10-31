@@ -137,19 +137,17 @@ python3 scripts/run-smoke.py "$PWD/build/scroll-benchmark" --scroll-benchmark
 
 ## README 展示图维护
 
-展示图使用当前 Debug 构建的真实视图，日期由既有冒烟场景固定。先按 [AGENTS.md](../AGENTS.md#构建与基础验证) 构建，再从仓库根目录执行：
+月历展示图使用实际应用的完整桌面截图，包含菜单栏与桌面背景，以展示毛玻璃效果。需要生成固定日期的视图快照时，先按 [AGENTS.md](../AGENTS.md#构建与基础验证) 构建，再从仓库根目录执行：
 
 ```sh
 python3 scripts/run-smoke.py "$PWD/build/readme-screenshots"
-python3 scripts/run-smoke.py "$PWD/build/readme-grid" --calendar-grid-smoke
 ```
 
-| README 图片 | 生成产物 | 展示内容 |
+| README 图片 | 图片来源 | 展示内容 |
 | --- | --- | --- |
-| `docs/images/calendar-light.png` | `build/readme-screenshots/light-october.png` | 2026 年 10 月 23 日，浅色月历与霜降介绍 |
-| `docs/images/calendar-dark.png` | `build/readme-screenshots/summary-frost-dark.png` | 同一天的深色月历与霜降介绍 |
-| `docs/images/year-overview.png` | `build/readme-grid/grid-2026-10-0-out-end.png` | 年概览端点，2026 年秋冬月份 |
+| `docs/images/calendar-light.png` | 手动桌面截图 | 2026 年 10 月，今天为 31 日，选中 16 日，浅色月历与世界粮食日介绍 |
+| `docs/images/calendar-dark.png` | 手动桌面截图 | 2026 年 10 月，今天为 31 日，选中 23 日，深色月历与霜降介绍 |
 
-逐张检查文字、日期、布局、选中状态和图片完整性后，将对应 PNG 原样复制到表中目标路径。图片在 README 中按 320 逻辑点宽显示，保留原始分辨率；不添加虚构控件或改绘日期内容。若更换生成场景，同步更新此表和 README 的图片说明。
+逐张检查文字、日期、布局、选中状态和图片完整性后，将对应 PNG 原样复制到表中目标路径。月历桌面截图在 README 中横向并排、各占一半宽度，保留原始分辨率；不添加虚构控件或改绘日期内容。若更换截图场景，同步更新此表和 README 的图片说明。
 
-月历与年概览分别采用星期一和星期日起始，展示两种已有偏好。视图快照不包含菜单栏和完整桌面，无法完整表现窗口服务器合成的毛玻璃背景；不得把这组图片作为全部交互、显示刷新时序或物理帧率验证通过的证据。即使失败的运行已生成部分完整快照，也必须单独记录该次检查失败，且只能使用经人工确认的完整静态画面。
+当前月历展示图采用星期日起始。冒烟生成的视图快照不包含菜单栏和完整桌面，无法完整表现窗口服务器合成的毛玻璃背景；其中 `build/readme-screenshots/light-october.png` 与 `build/readme-screenshots/summary-frost-dark.png` 可用于检查固定日期的浅色、深色月历，但不能复现当前桌面展示图。不得把展示图作为全部交互、显示刷新时序或物理帧率验证通过的证据。即使失败的运行已生成部分完整快照，也必须单独记录该次检查失败，且只能使用经人工确认的完整静态画面。

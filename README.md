@@ -1,7 +1,5 @@
 # 日序 DayOrder
 
-当前版本：`v1.0.0-alpha.03`。
-
 日序是一款使用 Swift 构建的原生 macOS 菜单栏日历，支持公历、农历、二十四节气、节日和中国大陆放假调休查询。日历数据内置，可离线使用，无需账户或系统日历权限。
 
 [快速开始](#快速开始) · [核心功能](#核心功能) · [界面预览](#界面预览) · [开发与贡献](#开发与贡献)
@@ -31,20 +29,18 @@ open build/DayOrder.app
 
 ## 界面预览
 
-| 浅色月历 | 深色月历 |
-| :---: | :---: |
-| <img src="docs/images/calendar-light.png" width="320" alt="日序浅色月历：2026 年 10 月，显示农历、国庆休假、补班及霜降介绍"> | <img src="docs/images/calendar-dark.png" width="320" alt="日序深色月历：同一月份的农历、节气与休班标记"> |
+<table>
+  <tr>
+    <th width="50%">浅色月历</th>
+    <th width="50%">深色月历</th>
+  </tr>
+  <tr>
+    <td><img src="docs/images/calendar-light.png" width="100%" alt="日序浅色月历：2026 年 10 月，选中 16 日，显示世界粮食日介绍及桌面毛玻璃效果"></td>
+    <td><img src="docs/images/calendar-dark.png" width="100%" alt="日序深色月历：2026 年 10 月，选中 23 日，显示霜降介绍及桌面毛玻璃效果"></td>
+  </tr>
+</table>
 
-<details>
-<summary>查看年概览</summary>
-
-<p align="center">
-  <img src="docs/images/year-overview.png" width="320" alt="日序年概览：两列小月历、年份跳转入口和返回今天按钮">
-</p>
-
-</details>
-
-以上为实际应用界面快照，日期固定用于展示；毛玻璃效果会随桌面背景变化。
+以上为实际应用界面截图；毛玻璃效果会随桌面背景变化。
 
 ## 基本使用
 
