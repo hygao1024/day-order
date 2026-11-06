@@ -246,6 +246,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // showPanel 会刷新真实日期；快照随后固定时钟，使用同一生产视图。
             model.today = model.engine.date(2026, 10, 23)
             model.select(model.today)
+            if ProcessInfo.processInfo.arguments.contains("--calendar-mode-latency-smoke") {
+                guard let source = smokeCalendarSource, let presentation = presentationController else {
+                    throw CocoaError(.coderInvalidValue)
+                }
+                defaults.set(1, forKey: "firstWeekday")
+                try await CalendarModeLatencySmoke.verify(model: model, presentation: presentation,
+                    source: source, defaults: defaults, directory: directory)
+                try "切档批量采样、启动耗时、异步标记更新和年概览交接检查通过。\n"
+                    .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.arguments.contains("--calendar-marker-morph-smoke") {
                 guard let source = smokeCalendarSource, let presentation = presentationController else {
                     throw CocoaError(.coderInvalidValue)

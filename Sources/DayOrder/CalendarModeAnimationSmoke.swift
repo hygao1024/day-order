@@ -230,9 +230,9 @@ import Foundation
                 for (rect, image) in dates {
                     handoffError = max(handoffError, try difference(image, bitmap(presentation.view, rect)))
                 }
+                try save(presentation.view, "mode-motion-\(month)-\(mode.rawValue)-live")
                 try require(!dates.isEmpty && handoffError < 0.1,
                             "日期快照交还真实视图时像素跳变：\(handoffError)")
-                try save(presentation.view, "mode-motion-\(month)-\(mode.rawValue)-live")
                 try require(shell.content.alphaValue == 1 && !presentation.hasActiveFrameDriver && !presentation.isTransitioning,
                             "交接后没有恢复真实正文或停止刷新")
                 let callbacks = presentation.driverCallbackCount

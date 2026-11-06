@@ -413,6 +413,10 @@ struct CalendarTimelineView: NSViewRepresentable {
             }
         }
 
+        func refreshEvents(in view: CalendarWeekView, row: Int) {
+            configure(view, row: row)
+        }
+
         private func configure(_ view: CalendarWeekView, row: Int) {
             guard case .week(let start, let sectionMonth) = timeline.rows[row] else { return }
             let values: [DayInfo]

@@ -18,6 +18,8 @@ Status: implemented
 
 本决定扩展[日程按钮循环切换](2026-11-06-calendar-mode-cycling.md)，不改变其权限检测和模式持久化语义；展示驱动及连续运动的共同约束继续由[连续日历运动](../bug-fix/2026-10-24-continuous-calendar-motion.md)拥有。
 
+日程端点的批量采样、按需年概览画布以及事件返回后的局部更新由[切档启动优化](../bug-fix/2026-11-06-calendar-mode-latency.md)部分取代，本文保留运动与形变接续的理由。
+
 ## Alternatives considered
 
 - 只为模式赋值添加 SwiftUI 动画：正文由原生表格和独立窗口拥有，不能自动同步行高、窗口与底栏。
