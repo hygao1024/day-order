@@ -131,7 +131,7 @@ struct CalendarEventMarker {
             let count = min(3, events.count)
             return (0..<count).map { index in
                 let offset = (CGFloat(index) - CGFloat(count - 1) / 2) * 5
-                return marker(events[index], rect: CGRect(x: width / 2 + offset - 1.75, y: 46, width: 3.5, height: 3.5),
+                return marker(events[index], rect: CGRect(x: width / 2 + offset - 1.75, y: 50, width: 3.5, height: 3.5),
                               title: events[index].title)
             }
         }
@@ -141,7 +141,7 @@ struct CalendarEventMarker {
             let x = CGFloat(segment.columns.lowerBound - column) * width
             let left = segment.continuesBefore ? 0 : inset
             let right = segment.continuesAfter ? 0 : inset
-            let rect = CGRect(x: x + left, y: 45 + CGFloat(segment.lane) * (mode == .detailed ? 14 : 4),
+            let rect = CGRect(x: x + left, y: 49 + CGFloat(segment.lane) * (mode == .detailed ? 14 : 4),
                 width: CGFloat(segment.columns.count) * width - left - right, height: mode == .detailed ? 12 : 2)
             var value = marker(segment.event, rect: rect, title: segment.event.title)
             value.continuesBefore = segment.continuesBefore
@@ -150,7 +150,7 @@ struct CalendarEventMarker {
         }
         if mode == .detailed, overflow > 0,
            let event = events.first(where: { event in !segments.contains { $0.event.occurrenceID == event.occurrenceID } }) {
-            result.append(marker(event, rect: CGRect(x: 1, y: 59, width: width - 2, height: 12), title: "+\(overflow)项"))
+            result.append(marker(event, rect: CGRect(x: 1, y: 63, width: width - 2, height: 12), title: "+\(overflow)项"))
         }
         return result
     }

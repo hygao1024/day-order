@@ -12,6 +12,8 @@ Status: implemented
 
 此决定补充[月视图圆角日期区](2026-10-24-rounded-calendar-surface.md)的单日选择反馈，不改变外层容器和滚动布局。
 
+日程模式扩展日期格后的反馈范围由[日期与日程分区](../bug-fix/2026-11-06-date-selection-event-spacing.md)补充：底色仍只承载两行日期内容，不随事件区域增长。
+
 ## Alternatives considered
 
 - 仅增大普通圆角、保留描边：仍具有表单输入框观感。

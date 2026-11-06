@@ -617,8 +617,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var local = Calendar(identifier: .gregorian)
         local.timeZone = .current
         func fixture(_ id: String, _ title: String, day: Int, color: CalendarEvent.Color,
-                     hour: Int = 10, duration: TimeInterval = 3600, allDay: Bool = false) -> CalendarEvent {
-            let start = local.date(from: DateComponents(year: 2026, month: 11, day: day, hour: hour))!
+                     hour: Int = 10, duration: TimeInterval = 3600, allDay: Bool = false, month: Int = 11) -> CalendarEvent {
+            let start = local.date(from: DateComponents(year: 2026, month: month, day: day, hour: hour))!
             return CalendarEvent(id: id, title: title, start: start, end: start.addingTimeInterval(duration), allDay: allDay, color: color)
         }
         let blue = CalendarEvent.Color(red: 0.20, green: 0.48, blue: 0.95)
@@ -669,8 +669,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try require(stored.mode == .compact, "显示偏好未持久化")
         stored.stop()
         var geometry: [[String: Any]] = []
-        for month in [2, 8, 11] {
-            let monthValues = values.map { value in
+        for month in [2, 8, 10, 11] {
+            var monthValues = values.map { value in
                 var parts = local.dateComponents([.year, .month, .day, .hour, .minute], from: value.start)
                 parts.month = month
                 let start = local.date(from: parts)!
@@ -678,8 +678,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                      end: start.addingTimeInterval(value.end.timeIntervalSince(value.start)),
                                      allDay: value.allDay, color: value.color)
             }
+            if month == 10 {
+                monthValues += [fixture("holiday", "国庆节（休）", day: 4, color: purple,
+                                        hour: 0, duration: 4 * 86400, allDay: true, month: 10),
+                                fixture("visit", "拜访", day: 6, color: blue, month: 10)]
+            }
             await source.configure(access: .fullAccess, values: monthValues)
-            model.select(model.engine.date(2026, month, 5))
+            model.select(model.engine.date(2026, month, month == 10 ? 6 : 18))
             try await Task.sleep(for: .milliseconds(100))
             let selection = model.selection
             for mode in CalendarEventDisplay.allCases {
@@ -702,7 +707,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     do {
                         let button = buttons.first { $0.date == model.engine.date(2026, month, 5) }
                         try require(button != nil, "包含日程的真实日期按钮不可见")
-                        try require(mode == .hidden || button?.events.count == 3, "可见日期未收到日程")
+                        try require(mode == .hidden || button?.events.count == (month == 10 ? 4 : 3), "可见日期未收到日程")
                         try require(button?.accessibilityLabel()?.contains("周会") == (mode != .hidden), "隐藏与旁白日程语义不一致")
                     }
                     guard let icon = descendants(root).compactMap({ $0 as? CalendarEventModeButton }).first else {

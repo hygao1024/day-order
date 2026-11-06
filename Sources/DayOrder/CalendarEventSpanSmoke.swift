@@ -12,10 +12,13 @@ import DayOrderCore
             }
         }
         for button in buttons {
+            try require(button.focusRingMaskBounds.maxY <= 46,
+                        "日期反馈底色延伸到日程区域")
             for marker in button.eventMarkers {
                 let clipped = button.bounds.intersection(marker.style.frame)
-                try require(!clipped.isNull && clipped.minY >= 45 && button.bounds.contains(clipped),
-                            "日程可见部分覆盖农历或越过日期格")
+                try require(!clipped.isNull && marker.style.frame.minY >= button.focusRingMaskBounds.maxY + 3
+                            && marker.style.frame.maxY <= button.bounds.maxY,
+                            "日程与日期反馈间距不足或底部被日期格裁切")
             }
         }
         guard mode == .detailed || mode == .compact else { return 0 }

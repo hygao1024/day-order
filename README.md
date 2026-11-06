@@ -46,7 +46,7 @@ open build/DayOrder.app
 
 系统日程的详细模式：
 
-<img src="docs/images/calendar-events-light.png" width="320" alt="日序详细日程模式：2026 年 11 月，日期下显示日程胶囊、更多事件计数和跨周连续横条">
+<img src="docs/images/calendar-events-light.png" width="320" alt="日序详细日程模式：2026 年 11 月选中 18 日，日期下显示日程胶囊、更多事件计数和跨周连续横条">
 
 以上为实际应用视图快照，个人日程使用示例数据；桌面上的毛玻璃效果会随后方内容变化。
 

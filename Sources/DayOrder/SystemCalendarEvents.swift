@@ -218,9 +218,9 @@ final class SystemCalendarEvents: NSObject, ObservableObject {
 @MainActor extension CalendarEventDisplay {
     var extraRowHeight: CGFloat {
         switch self {
-        case .detailed: 26
-        case .compact: 10
-        case .dots: 6
+        case .detailed: 30
+        case .compact: 14
+        case .dots: 10
         case .hidden: 0
         }
     }

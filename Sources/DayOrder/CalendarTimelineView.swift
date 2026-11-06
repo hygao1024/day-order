@@ -623,7 +623,7 @@ final class CalendarDayButton: NSButton, CalendarZoomParticipant {
 
     private var feedbackPath: NSBezierPath {
         NSBezierPath(cgPath: RoundedRectangle(cornerRadius: 9, style: .continuous)
-            .path(in: bounds.insetBy(dx: 0.5, dy: 0.5)).cgPath)
+            .path(in: focusRingMaskBounds).cgPath)
     }
 
     private func drawText(_ value: String, rect: NSRect, font: NSFont, color: NSColor) {
@@ -632,6 +632,8 @@ final class CalendarDayButton: NSButton, CalendarZoomParticipant {
         text.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
     }
     override func viewDidChangeEffectiveAppearance() { needsDisplay = true }
-    override var focusRingMaskBounds: NSRect { bounds }
+    override var focusRingMaskBounds: NSRect {
+        NSRect(x: 0, y: 0, width: bounds.width, height: 46).insetBy(dx: 0.5, dy: 0.5)
+    }
     override func drawFocusRingMask() { feedbackPath.fill() }
 }
