@@ -595,7 +595,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let button = descendants(root).compactMap({ $0 as? CalendarEventModeButton }).first else {
                 preconditionFailure("未找到真实日程切换按钮")
             }
-            for _ in 0..<4 where events.mode != mode { button.performClick(nil) }
+            // 同档位重试也走真实按钮，完整循环后重新进入目标档。
+            for _ in 0..<4 {
+                button.performClick(nil)
+                if events.mode == mode { break }
+            }
         }
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
         var local = Calendar(identifier: .gregorian)
@@ -613,6 +617,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                       fixture("dinner", "聚餐", day: 8, color: purple),
                       fixture("birthday", "生日", day: 14, color: blue, hour: 0, duration: 86400, allDay: true),
                       fixture("car", "汽车保养", day: 23, color: purple),
+                      fixture("retreat", "团队出行", day: 16, color: blue, hour: 0, duration: 9 * 86400, allDay: true),
                       fixture("trip", "跨日出差", day: 26, color: blue, hour: 23, duration: 7200)]
         defaults.set(1, forKey: "firstWeekday")
         model.today = model.engine.date(2026, 11, 5)
@@ -680,10 +685,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     try require(root.bounds.width == 320 && model.selection == selection,
                                 "面板宽度或选择被模式切换改变：月份=\(month)，模式=\(mode)，宽度=\(root.bounds.width)，选择=\(model.selection)，预期=\(selection)")
                     let buttons = descendants(table).compactMap { $0 as? CalendarDayButton }.filter { !$0.visibleRect.isEmpty }
-                    for button in buttons {
-                        let frames = CalendarEventDrawing.frames(count: button.events.count, mode: mode, width: button.bounds.width)
-                        try require(frames.allSatisfy { button.bounds.contains($0) && $0.minY >= 45 }, "日程越过日期列或覆盖农历")
-                    }
+                    let seams = try CalendarEventSpanSmoke.verify(buttons: buttons, mode: mode, root: presentation.view,
+                        snapshot: directory.appendingPathComponent("events-\(month)-\(mode.rawValue)-\(appearance).png"))
                     do {
                         let button = buttons.first { $0.date == model.engine.date(2026, month, 5) }
                         try require(button != nil, "包含日程的真实日期按钮不可见")
@@ -697,7 +700,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     try require(icon.mode == mode && frame.minX > 120 && frame.maxX < 210, "模式图标未位于月份和今天之间")
                     geometry.append(["month": month, "mode": mode.rawValue, "appearance": appearance,
                                      "viewport": height, "weeks": rows.count, "header": presentation.shell!.header.frame.height,
-                                     "width": root.bounds.width, "iconX": frame.minX])
+                                     "width": root.bounds.width, "iconX": frame.minX, "spanSeams": seams])
                 }
             }
         }

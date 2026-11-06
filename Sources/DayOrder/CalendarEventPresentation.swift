@@ -80,6 +80,7 @@ struct CalendarEventMarkerStyle: Animatable {
     var opacity: CGFloat
     var fillOpacity: CGFloat
     var detailOpacity: CGFloat
+    var collapseX: CGFloat? = nil
 
     typealias AnimatableData = AnimatablePair<CGRect.AnimatableData, AnimatablePair<CGFloat, AnimatablePair<CGFloat, CGFloat>>>
     var animatableData: AnimatableData {
@@ -95,7 +96,7 @@ struct CalendarEventMarkerStyle: Animatable {
     var collapsed: Self {
         var result = self
         let diameter: CGFloat = 3.5
-        let center = CGPoint(x: frame.midX, y: min(frame.midY, 46 - diameter / 2))
+        let center = CGPoint(x: collapseX ?? frame.midX, y: min(frame.midY, 46 - diameter / 2))
         result.frame = CGRect(x: center.x - diameter / 2, y: center.y - diameter / 2, width: diameter, height: diameter)
         result.opacity = 0
         result.fillOpacity = 0.85
@@ -105,50 +106,53 @@ struct CalendarEventMarkerStyle: Animatable {
 }
 
 struct CalendarEventMarker {
-    struct ID: Hashable {
-        let event: String
-        let start: Date
-    }
+    typealias ID = CalendarEvent.OccurrenceID
     let id: ID
     var style: CalendarEventMarkerStyle
     let color: CalendarEvent.Color
     let title: String
+    var continuesBefore = false
+    var continuesAfter = false
 }
 
 @MainActor enum CalendarEventDrawing {
-    static func frames(count: Int, mode: CalendarEventDisplay, width: CGFloat) -> [NSRect] {
-        switch mode {
-        case .hidden: return []
-        case .detailed:
-            return (0..<min(2, count)).map { NSRect(x: 1, y: 45 + CGFloat($0) * 14, width: width - 2, height: 12) }
-        case .compact:
-            return (0..<min(3, count)).map { NSRect(x: 3, y: 45 + CGFloat($0) * 4, width: width - 6, height: 2) }
-        case .dots:
-            let visible = min(3, count)
-            return (0..<visible).map { index in
-                let offset = (CGFloat(index) - CGFloat(visible - 1) / 2) * 5
-                return NSRect(x: width / 2 + offset - 1.75, y: 46, width: 3.5, height: 3.5)
-            }
-        }
-    }
-
     static func markers(events: [CalendarEvent], mode: CalendarEventDisplay, width: CGFloat,
-                        muted: Bool, dark: Bool) -> [CalendarEventMarker] {
-        frames(count: events.count, mode: mode, width: width).enumerated().map { index, rect in
-            let event = events[index]
-            return CalendarEventMarker(id: .init(event: event.id, start: event.start),
+                        muted: Bool, dark: Bool, segments: [CalendarEventWeekLayout.Segment],
+                        column: Int, overflow: Int) -> [CalendarEventMarker] {
+        func marker(_ event: CalendarEvent, rect: CGRect, title: String) -> CalendarEventMarker {
+            CalendarEventMarker(id: event.occurrenceID,
                 style: CalendarEventMarkerStyle(frame: rect, opacity: muted ? 0.25 : 1,
                     fillOpacity: mode == .detailed ? (dark ? 0.28 : 0.16) : 0.85,
-                    detailOpacity: mode == .detailed ? 1 : 0),
-                color: event.color, title: index == 1 && events.count > 2 && mode == .detailed ? "+\(events.count - 1)项" : event.title)
+                    detailOpacity: mode == .detailed ? 1 : 0, collapseX: width / 2),
+                color: event.color, title: title)
         }
-    }
-
-    static func draw(events: [CalendarEvent], mode: CalendarEventDisplay, in view: NSView, muted: Bool) {
-        let dark = view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        for marker in markers(events: events, mode: mode, width: view.bounds.width, muted: muted, dark: dark) {
-            draw(marker: marker, style: marker.style, dark: dark)
+        if mode == .hidden { return [] }
+        if mode == .dots {
+            let count = min(3, events.count)
+            return (0..<count).map { index in
+                let offset = (CGFloat(index) - CGFloat(count - 1) / 2) * 5
+                return marker(events[index], rect: CGRect(x: width / 2 + offset - 1.75, y: 46, width: 3.5, height: 3.5),
+                              title: events[index].title)
+            }
         }
+        let inset: CGFloat = mode == .detailed ? 1 : 3
+        var result = segments.map { segment in
+            // 每格裁切同一个周内横条；文字只在周段开头出现，并可跨越日期列。
+            let x = CGFloat(segment.columns.lowerBound - column) * width
+            let left = segment.continuesBefore ? 0 : inset
+            let right = segment.continuesAfter ? 0 : inset
+            let rect = CGRect(x: x + left, y: 45 + CGFloat(segment.lane) * (mode == .detailed ? 14 : 4),
+                width: CGFloat(segment.columns.count) * width - left - right, height: mode == .detailed ? 12 : 2)
+            var value = marker(segment.event, rect: rect, title: segment.event.title)
+            value.continuesBefore = segment.continuesBefore
+            value.continuesAfter = segment.continuesAfter
+            return value
+        }
+        if mode == .detailed, overflow > 0,
+           let event = events.first(where: { event in !segments.contains { $0.event.occurrenceID == event.occurrenceID } }) {
+            result.append(marker(event, rect: CGRect(x: 1, y: 59, width: width - 2, height: 12), title: "+\(overflow)项"))
+        }
+        return result
     }
 
     static func draw(marker: CalendarEventMarker, style: CalendarEventMarkerStyle, dark: Bool) {
@@ -161,6 +165,13 @@ struct CalendarEventMarker {
         let tint = NSColor(srgbRed: marker.color.red, green: marker.color.green, blue: marker.color.blue, alpha: 1)
         cg.setAlpha(opacity)
         let pill = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
+        let square = rect.height / 2 * min(1, max(0, (rect.width - 3.5) / 10.5))
+        if marker.continuesBefore {
+            pill.appendRect(CGRect(x: rect.minX, y: rect.minY, width: square, height: rect.height))
+        }
+        if marker.continuesAfter {
+            pill.appendRect(CGRect(x: rect.maxX - square, y: rect.minY, width: square, height: rect.height))
+        }
         tint.withAlphaComponent(min(1, max(0, style.fillOpacity))).setFill()
         pill.fill()
         let room = min(1, max(0, (rect.height - 3.5) / 8.5)) * min(1, max(0, (rect.width - 14) / 12))

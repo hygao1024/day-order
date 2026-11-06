@@ -457,11 +457,18 @@ final class CalendarWeekView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func configure(days: [DayInfo], sectionMonth: Date, model: CalendarModel, options: CalendarContentOptions) {
-        for (button, day) in zip(buttons, days) {
+        let mode = model.events.mode
+        let layout = CalendarEventWeekLayout(dates: days.map(\.date), days: model.events.days, engine: model.engine)
+        let visible = layout.visibleSegments(limit: mode == .detailed ? 2 : 3, reservingOverflow: mode == .detailed)
+        for (column, pair) in zip(buttons, days).enumerated() {
+            let (button, day) = pair
+            let segments = visible.filter { $0.columns.contains(column) }
+            let overflow = layout.segments.filter { $0.columns.contains(column) }.count - segments.count
             button.configure(day: day, annotations: options.annotations(for: day),
                 holiday: options.holidaySchedule ? model.holidays.day(day) : nil,
                 isInMonth: model.engine.calendar.isDate(day.date, equalTo: sectionMonth, toGranularity: .month),
-                events: model.events.days[day.date] ?? [], mode: model.events.mode,
+                events: model.events.days[day.date] ?? [], mode: mode,
+                segments: segments, column: column, overflow: overflow,
                 today: model.today, selection: model.selection, enabled: model.engine.isSupported(day.date)) {
                     [weak model] in model?.selectVisibleDay(day.date)
                 }
@@ -498,10 +505,14 @@ final class CalendarDayButton: NSButton, CalendarZoomParticipant {
     private var onSelect: (() -> Void)?
     private(set) var events: [CalendarEvent] = []
     private(set) var eventMode = CalendarEventDisplay.hidden
+    private var eventSegments: [CalendarEventWeekLayout.Segment] = []
+    private var eventColumn = 0
+    private var eventOverflow = 0
     var date: Date? { day?.date }
     var eventMarkers: [CalendarEventMarker] {
         CalendarEventDrawing.markers(events: events, mode: eventMode, width: bounds.width,
-                                     muted: !isInMonth, dark: effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+            muted: !isInMonth, dark: effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua,
+            segments: eventSegments, column: eventColumn, overflow: eventOverflow)
     }
     override var isFlipped: Bool { true }
     private static let accent = NSColor(srgbRed: 0.89, green: 0.20, blue: 0.15, alpha: 1)
@@ -520,6 +531,7 @@ final class CalendarDayButton: NSButton, CalendarZoomParticipant {
     func configure(day: DayInfo, annotations: [Annotation], holiday: HolidayDay?,
                    isInMonth: Bool,
                    events: [CalendarEvent], mode: CalendarEventDisplay,
+                   segments: [CalendarEventWeekLayout.Segment], column: Int, overflow: Int,
                    today: Date, selection: Date, enabled: Bool, onSelect: @escaping () -> Void) {
         self.day = day
         annotation = annotations.first
@@ -527,6 +539,9 @@ final class CalendarDayButton: NSButton, CalendarZoomParticipant {
         self.isInMonth = isInMonth
         self.events = events
         eventMode = mode
+        eventSegments = segments
+        eventColumn = column
+        eventOverflow = overflow
         self.today = day.date == today
         selected = day.date == selection
         isEnabled = enabled
@@ -581,7 +596,12 @@ final class CalendarDayButton: NSButton, CalendarZoomParticipant {
                      color: !isInMonth ? muted : holiday.isOffDay ? Self.accent : .secondaryLabelColor)
         }
         if !snapshotHidesEventMarkers, eventMode != .hidden, !events.isEmpty {
-            CalendarEventDrawing.draw(events: events, mode: eventMode, in: self, muted: !isInMonth)
+            NSGraphicsContext.saveGraphicsState()
+            defer { NSGraphicsContext.restoreGraphicsState() }
+            NSBezierPath(rect: bounds).addClip()
+            for marker in eventMarkers {
+                CalendarEventDrawing.draw(marker: marker, style: marker.style, dark: dark)
+            }
         }
     }
 

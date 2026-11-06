@@ -23,6 +23,13 @@ public enum CalendarEventDisplay: String, CaseIterable, Sendable {
 }
 
 public struct CalendarEvent: Equatable, Sendable {
+    public struct OccurrenceID: Hashable, Sendable {
+        public let event: String
+        public let start: Date
+    }
+
+    public var occurrenceID: OccurrenceID { OccurrenceID(event: id, start: start) }
+
     public struct Color: Equatable, Sendable {
         public let red: Double
         public let green: Double

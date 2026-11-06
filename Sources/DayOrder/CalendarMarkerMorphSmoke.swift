@@ -36,7 +36,8 @@ import DayOrderCore
             return sample
         }
         func primary(_ sample: [String: [String: Double]]) throws -> [String: Double] {
-            guard let value = sample.first(where: { $0.key.contains(":morph-primary:") })?.value else {
+            guard let key = sample.keys.sorted().first(where: { $0.contains(":morph-primary:") }),
+                  let value = sample[key] else {
                 throw NSError(domain: "DayOrder.MarkerMorph", code: 2,
                               userInfo: [NSLocalizedDescriptionKey: "主日程形变状态丢失"])
             }
@@ -92,7 +93,7 @@ import DayOrderCore
             let start = local.date(from: DateComponents(year: 2026, month: month, day: 5, hour: 10))!
             let values = [
                 CalendarEvent(id: "morph-primary", title: "产品设计讨论", start: start,
-                    end: start.addingTimeInterval(3600), allDay: false,
+                    end: start.addingTimeInterval(72 * 3600), allDay: false,
                     color: .init(red: 0.15, green: 0.4, blue: 0.95)),
                 CalendarEvent(id: "repeat", title: "重复实例一", start: start.addingTimeInterval(4000),
                     end: start.addingTimeInterval(5000), allDay: false,
