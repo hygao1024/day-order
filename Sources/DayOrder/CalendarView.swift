@@ -4,6 +4,7 @@ import SwiftUI
 
 struct CalendarView: View {
     @ObservedObject var model: CalendarModel
+    @ObservedObject var events: SystemCalendarEvents
     let launchAtLogin: LaunchAtLogin
     let appUpdater: AppUpdater
     @AppStorage("showTraditional") private var showTraditional = true
@@ -31,6 +32,7 @@ struct CalendarView: View {
         // 原生窗口外观会回传到嵌套托管视图，避开 SwiftUI 正在执行的更新轮次。
         .task(id: appearance) { applyAppearance() }
         .task(id: model.displayedYear) { await model.loadHolidayCache(year: model.displayedYear) }
+        .task(id: model.month) { events.update(month: model.month, engine: model.engine) }
         .onChange(of: menuBarDisplay) { updateMenuBar() }
         .onChange(of: menuBarDateFormat) { updateMenuBar() }
         .onExitCommand {
@@ -52,7 +54,7 @@ struct CalendarView: View {
                 else if model.showingYearOverview {
                     YearCalendarScrollView(model: model, firstWeekday: effectiveWeekday)
                 } else {
-                    CalendarTimelineView(model: model, firstWeekday: effectiveWeekday, options: contentOptions)
+                    CalendarTimelineView(model: model, events: events, firstWeekday: effectiveWeekday, options: contentOptions)
                 }
             }),
             footer: AnyView(Group {
@@ -63,7 +65,8 @@ struct CalendarView: View {
                         .frame(maxWidth: .infinity).padding(.vertical, 7)
                 } else { detail.padding(12) }
             }),
-            yearOverview: model.showingYearOverview, showingSettings: model.showingSettings)
+            yearOverview: model.showingYearOverview, showingSettings: model.showingSettings,
+            calendarHeight: events.mode.viewportHeight)
     }
 
     private var monthHeader: some View {
@@ -79,6 +82,7 @@ struct CalendarView: View {
                 .help("浏览年份和月份")
                 .accessibilityLabel("年概览，当前\(String(month.year))年\(month.month)月")
                 Spacer(minLength: 0)
+                CalendarEventMenu(events: events).frame(width: 24, height: 24)
                 monthNavigation
             }
             HStack(spacing: 0) {

@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var appUpdater = AppUpdater(enabled: false)
     #if DEBUG
     private var smokeLoginService: SmokeLoginService?
+    private var smokeCalendarSource: SmokeCalendarSource?
     #endif
     private var refreshTimer: Timer?
     private var isTerminating = false
@@ -28,6 +29,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
         do {
             #if DEBUG
+            let smokeDomain = smokeDirectory.map { _ in "com.dayorder.smoke.\(UUID().uuidString)" }
+            if let smokeDomain { defaults = UserDefaults(suiteName: smokeDomain)! }
             if smokeDirectory != nil, ProcessInfo.processInfo.arguments.contains("--updates-smoke") {
                 guard let path = ProcessInfo.processInfo.environment["DAYORDER_UPDATE_TEST_BUNDLE"],
                       let bundle = Bundle(path: path),
@@ -46,19 +49,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             #else
             let holidayCacheDirectory: URL? = nil
             #endif
-            let model = CalendarModel(engine: try CalendarEngine(), holidayCacheDirectory: holidayCacheDirectory)
+            let eventSource: any SystemCalendarSource
+            #if DEBUG
+            if smokeDirectory != nil {
+                let source = SmokeCalendarSource()
+                smokeCalendarSource = source
+                eventSource = source
+            } else { eventSource = EventKitCalendarSource() }
+            #else
+            eventSource = EventKitCalendarSource()
+            #endif
+            let model = CalendarModel(engine: try CalendarEngine(), holidayCacheDirectory: holidayCacheDirectory,
+                                      events: SystemCalendarEvents(defaults: defaults, source: eventSource))
             self.model = model
-            let view = CalendarView(model: model, launchAtLogin: launchAtLogin, appUpdater: appUpdater,
+            let view = CalendarView(model: model, events: model.events, launchAtLogin: launchAtLogin, appUpdater: appUpdater,
                                     updateMenuBar: { [weak self] in self?.refresh() },
                                     updatePanelAppearance: { [weak self] in self?.panel.appearance = $0 }) {
                 [weak self] in self?.panel.performClose(nil)
             }
             var root = AnyView(view)
             #if DEBUG
-            if let directory = smokeDirectory {
-                let domain = "com.dayorder.smoke.\(UUID().uuidString)"
-                let defaults = UserDefaults(suiteName: domain)!
-                self.defaults = defaults
+            if let directory = smokeDirectory, let domain = smokeDomain {
                 root = AnyView(view.defaultAppStorage(defaults))
                 Task { @MainActor [weak self] in
                     guard let self else { return }
@@ -197,6 +208,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.close()
         presentationController?.cancelTransition()
         model?.cancelHolidayUpdate()
+        model?.events.stop()
         refreshTimer?.invalidate()
         removeKeyboardMonitor()
         if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
@@ -233,6 +245,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // showPanel 会刷新真实日期；快照随后固定时钟，使用同一生产视图。
             model.today = model.engine.date(2026, 10, 23)
             model.select(model.today)
+            if ProcessInfo.processInfo.arguments.contains("--calendar-events-smoke") {
+                try await verifyCalendarEvents(directory: directory)
+                try "系统日历权限边界、四档显示、固定布局、跨日数据、刷新与迟到结果验证通过。\n"
+                    .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.arguments.contains("--updates-smoke") {
                 try await verifyAppUpdates(directory: directory)
                 try "更新偏好、真实设置控件和 Sparkle 检查验证通过。\n"
@@ -326,6 +345,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             try await verifyPanel(directory: directory)
+            try await verifyCalendarEvents(directory: directory)
             model.today = model.engine.date(2026, 10, 23)
             model.select(model.today)
             try await saveSnapshot("light-october", to: directory)
@@ -496,6 +516,194 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    private func verifyCalendarEvents(directory: URL) async throws {
+        guard let model, let source = smokeCalendarSource, let root = hostingController?.view,
+              let presentation = presentationController else { throw CocoaError(.coderInvalidValue) }
+        let events = model.events
+        let coordinator = CalendarEventMenu.Coordinator(events: events)
+        let savedSelection = model.selection
+        let savedToday = model.today
+        let savedWeekday = defaults.object(forKey: "firstWeekday")
+        let savedAppearance = defaults.object(forKey: "appearance")
+        defer {
+            events.choose(.hidden)
+            defaults.set(savedWeekday, forKey: "firstWeekday")
+            defaults.set(savedAppearance, forKey: "appearance")
+            model.today = savedToday
+            model.select(savedSelection)
+        }
+        func require(_ value: Bool, _ message: String) throws {
+            guard value else { fputs("日程验证失败：\(message)\n", stderr); throw CocoaError(.coderInvalidValue) }
+        }
+        func wait(_ condition: () async -> Bool) async throws {
+            let end = Date().addingTimeInterval(3)
+            while !(await condition()) {
+                try require(Date() < end, "异步状态未在期限内收敛")
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        }
+        func settled() async throws { try await wait { !events.loading } }
+        func choose(_ mode: CalendarEventDisplay) {
+            let menu = coordinator.makeMenu()
+            menu.performActionForItem(at: CalendarEventDisplay.allCases.firstIndex(of: mode)!)
+        }
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        var local = Calendar(identifier: .gregorian)
+        local.timeZone = .current
+        func fixture(_ id: String, _ title: String, day: Int, color: CalendarEvent.Color,
+                     hour: Int = 10, duration: TimeInterval = 3600, allDay: Bool = false) -> CalendarEvent {
+            let start = local.date(from: DateComponents(year: 2026, month: 11, day: day, hour: hour))!
+            return CalendarEvent(id: id, title: title, start: start, end: start.addingTimeInterval(duration), allDay: allDay, color: color)
+        }
+        let blue = CalendarEvent.Color(red: 0.20, green: 0.48, blue: 0.95)
+        let purple = CalendarEvent.Color(red: 0.65, green: 0.30, blue: 0.80)
+        let values = [fixture("meeting", "周会", day: 5, color: blue),
+                      fixture("review", "产品评审与需求讨论", day: 5, color: purple, hour: 14),
+                      fixture("third", "复盘", day: 5, color: blue, hour: 16),
+                      fixture("dinner", "聚餐", day: 8, color: purple),
+                      fixture("birthday", "生日", day: 14, color: blue, hour: 0, duration: 86400, allDay: true),
+                      fixture("car", "汽车保养", day: 23, color: purple),
+                      fixture("trip", "跨日出差", day: 26, color: blue, hour: 23, duration: 7200)]
+        defaults.set(1, forKey: "firstWeekday")
+        model.today = model.engine.date(2026, 11, 5)
+        model.select(model.today)
+        events.update(month: model.month, engine: model.engine)
+        try require(events.mode == .hidden && events.days.isEmpty, "初始默认必须隐藏")
+        let hiddenRevision = events.revision
+        events.update(month: model.engine.date(2026, 10, 1), engine: model.engine)
+        events.update(month: model.month, engine: model.engine)
+        try require(events.revision == hiddenRevision, "隐藏模式的空刷新不应重建日期内容")
+        let initialRequests = await source.requests
+        try require(await source.reads == 0 && initialRequests == 0, "隐藏状态不得读取或请求授权")
+        let readsBeforeDenied = await source.reads
+        await source.configure(access: .notDetermined, grant: .denied)
+        choose(.detailed)
+        try await settled()
+        try require(events.authorization == .denied && events.days.isEmpty, "拒绝权限必须清空日程")
+        try require(await source.reads == readsBeforeDenied, "拒绝权限后仍调用了读取边界")
+        try require(coordinator.makeMenu().items.contains { $0.title.contains("权限设置") }, "拒绝后缺少恢复入口")
+        for access in [CalendarAuthorization.restricted, .writeOnly] {
+            await source.configure(access: access, grant: .denied)
+            choose(.compact)
+            try await settled()
+            try require(events.days.isEmpty && events.authorization != .fullAccess, "受限或仅写权限不能读取")
+            try require(await source.reads == readsBeforeDenied, "无完整访问权限时触发了读取")
+        }
+        await source.configure(access: .notDetermined, values: values, delay: .milliseconds(120))
+        let requests = await source.requests
+        choose(.detailed)
+        try await Task.sleep(for: .milliseconds(20))
+        choose(.compact)
+        try await settled()
+        try require(await source.requests == requests + 1, "快速切换重复请求了授权")
+        try require(events.mode == .compact && events.days[model.today]?.count == 3, "授权后未显示按日归属的数据")
+        try require(events.days[model.engine.date(2026, 11, 27)]?.first?.title == "跨日出差", "跨日事件丢失")
+        let stored = SystemCalendarEvents(defaults: defaults, source: source)
+        try require(stored.mode == .compact, "显示偏好未持久化")
+        stored.stop()
+        var geometry: [[String: Any]] = []
+        for month in [2, 8, 11] {
+            let monthValues = values.map { value in
+                var parts = local.dateComponents([.year, .month, .day, .hour, .minute], from: value.start)
+                parts.month = month
+                let start = local.date(from: parts)!
+                return CalendarEvent(id: value.id, title: value.title, start: start,
+                                     end: start.addingTimeInterval(value.end.timeIntervalSince(value.start)),
+                                     allDay: value.allDay, color: value.color)
+            }
+            await source.configure(access: .fullAccess, values: monthValues)
+            model.select(model.engine.date(2026, month, 5))
+            try await Task.sleep(for: .milliseconds(100))
+            let selection = model.selection
+            for mode in CalendarEventDisplay.allCases {
+                choose(mode)
+                try await settled()
+                for appearance in ["light", "dark"] {
+                    defaults.set(appearance, forKey: "appearance")
+                    try await saveSnapshot("events-\(month)-\(mode.rawValue)-\(appearance)", to: directory)
+                    let table = try calendarTimelineTable()
+                    let timeline = model.calendarTimeline(firstWeekday: 1)
+                    let rows = timeline.weekRows(inMonth: model.month)!
+                    let height = rows.reduce(CGFloat.zero) { $0 + table.rect(ofRow: $1).height }
+                    try require(abs(height - mode.viewportHeight) < 0.6, "增加行高后月份高度不匹配")
+                    try require(abs(table.enclosingScrollView!.contentSize.height - mode.viewportHeight) < 0.6, "日期区高度不匹配")
+                    try require(root.bounds.width == 320 && model.selection == selection,
+                                "面板宽度或选择被模式切换改变：月份=\(month)，模式=\(mode)，宽度=\(root.bounds.width)，选择=\(model.selection)，预期=\(selection)")
+                    let buttons = descendants(table).compactMap { $0 as? CalendarDayButton }.filter { !$0.visibleRect.isEmpty }
+                    for button in buttons {
+                        let frames = CalendarEventDrawing.frames(count: button.events.count, mode: mode, width: button.bounds.width)
+                        try require(frames.allSatisfy { button.bounds.contains($0) && $0.minY >= 45 }, "日程越过日期列或覆盖农历")
+                    }
+                    do {
+                        let button = buttons.first { $0.date == model.engine.date(2026, month, 5) }
+                        try require(button != nil, "包含日程的真实日期按钮不可见")
+                        try require(mode == .hidden || button?.events.count == 3, "可见日期未收到日程")
+                        try require(button?.accessibilityLabel()?.contains("周会") == (mode != .hidden), "隐藏与旁白日程语义不一致")
+                    }
+                    guard let icon = descendants(root).compactMap({ $0 as? CalendarEventModeButton }).first else {
+                        throw CocoaError(.coderInvalidValue)
+                    }
+                    let frame = root.convert(icon.bounds, from: icon)
+                    try require(icon.mode == mode && frame.minX > 120 && frame.maxX < 210, "模式图标未位于月份和今天之间")
+                    geometry.append(["month": month, "mode": mode.rawValue, "appearance": appearance,
+                                     "viewport": height, "weeks": rows.count, "header": presentation.shell!.header.frame.height,
+                                     "width": root.bounds.width, "iconX": frame.minX])
+                }
+            }
+        }
+        await source.configure(access: .fullAccess, values: values, failing: true)
+        choose(.detailed)
+        try await settled()
+        try require(events.errorMessage != nil && events.days.isEmpty, "读取失败缺少明确错误或残留旧数据")
+        await source.configure(access: .fullAccess, values: values)
+        choose(.detailed)
+        try await settled()
+        try require(events.errorMessage == nil && !events.days.isEmpty, "读取失败后无法重试恢复")
+        await source.holdRead()
+        choose(.detailed)
+        try await wait { await source.hasHeldRead }
+        choose(.hidden)
+        await source.finishRead(values)
+        try await Task.sleep(for: .milliseconds(50))
+        try require(events.days.isEmpty && events.mode == .hidden, "隐藏后的迟到读取恢复了私有数据")
+        await source.holdRead()
+        choose(.dots)
+        try await wait { await source.hasHeldRead }
+        await source.configure(access: .denied)
+        await source.finishRead(values)
+        try await settled()
+        try require(events.authorization == .denied && events.days.isEmpty, "读取期间撤销权限后仍展示数据")
+        await source.configure(access: .fullAccess, values: values)
+        let reads = await source.reads
+        await Task.detached { NotificationCenter.default.post(name: .EKEventStoreChanged, object: nil) }.value
+        try await wait { await source.reads > reads && !events.loading }
+        try require(!events.days.isEmpty, "后台日历变更通知未恢复日程")
+        model.showingSettings = true
+        try await saveSnapshot("events-settings-preserved", to: directory)
+        model.showingSettings = false
+        try await waitForCalendarTransition()
+        model.openYearOverview()
+        try await saveSnapshot("events-year-preserved", to: directory)
+        model.dismissYearLevel()
+        try await waitForCalendarTransition()
+        choose(.hidden)
+        try await settled()
+        model.today = model.engine.date(2026, 10, 31)
+        model.select(model.engine.date(2026, 10, 16))
+        defaults.set("light", forKey: "appearance")
+        try await saveSnapshot("readme-calendar-light", to: directory)
+        try require(model.month == model.engine.date(2026, 10, 1), "同时切换模式与跳转月份时，旧视口覆盖了新导航")
+        let readmeTable = try calendarTimelineTable()
+        let october = model.calendarTimeline(firstWeekday: 1).weekRows(inMonth: model.month)!.lowerBound
+        try require(abs(readmeTable.visibleRect.minY - readmeTable.rect(ofRow: october).minY) < 1,
+                    "展示图的月份状态与真实日期视口不一致")
+        model.select(model.engine.date(2026, 10, 23))
+        defaults.set("dark", forKey: "appearance")
+        try await saveSnapshot("readme-calendar-dark", to: directory)
+        try JSONSerialization.data(withJSONObject: geometry, options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("events-geometry.json"))
     }
 
     private func verifyPanelPosition(directory: URL) async throws {
@@ -717,6 +925,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         defer { panel.behavior = behavior }
         showPanel()
         model.select(original)
+        // 先让程序化选择进入真实视口，再模拟用户打开年概览；焦点由可见月份决定。
+        let readyBy = Date().addingTimeInterval(3)
+        let timeline = model.calendarTimeline(firstWeekday: defaults.integer(forKey: "firstWeekday"))
+        let row = timeline.weekRows(inMonth: model.engine.monthStart(original))!.lowerBound
+        while true {
+            let table = try calendarTimelineTable()
+            if model.calendarSnappedMonth == model.engine.monthStart(original),
+               abs(table.visibleRect.minY - table.rect(ofRow: row).minY) < 1 { break }
+            guard Date() < readyBy else { throw CocoaError(.coderInvalidValue) }
+            try await Task.sleep(for: .milliseconds(10))
+        }
         model.openYearOverview()
         guard model.yearDraft == "2026" else { throw CocoaError(.coderInvalidValue) }
         try await saveSnapshot("year-overview", to: directory)

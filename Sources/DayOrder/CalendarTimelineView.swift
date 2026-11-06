@@ -30,6 +30,7 @@ struct CalendarTimelineView: NSViewRepresentable {
     static let contentInset: CGFloat = 6
     static let cornerRadius: CGFloat = 12
     @ObservedObject var model: CalendarModel
+    @ObservedObject var events: SystemCalendarEvents
     let firstWeekday: Int
     let options: CalendarContentOptions
 
@@ -94,6 +95,8 @@ struct CalendarTimelineView: NSViewRepresentable {
         private var today: Date
         private var selection: Date
         private var holidayRevision: Int
+        private var eventRevision: Int
+        private var eventMode: CalendarEventDisplay
         private var updating = false
         private var scrollTask: Task<Void, Never>?
         private var scrollSerial = 0
@@ -115,6 +118,8 @@ struct CalendarTimelineView: NSViewRepresentable {
             today = model.today
             selection = model.selection
             holidayRevision = model.holidayRevision
+            eventRevision = model.events.revision
+            eventMode = model.events.mode
         }
 
         func disconnect() {
@@ -138,33 +143,33 @@ struct CalendarTimelineView: NSViewRepresentable {
             updating = true
             defer { updating = false }
             let rebuilt = firstWeekday != timeline.firstWeekday
+            let resized = eventMode != model.events.mode
+            let requestedNavigation = revision != model.calendarScrollRevision
+            if resized && !requestedNavigation { recordViewport() }
             let changed = self.options != options || today != model.today || selection != model.selection
-                || holidayRevision != model.holidayRevision
+                || holidayRevision != model.holidayRevision || eventRevision != model.events.revision || resized
             self.options = options
             today = model.today
             selection = model.selection
             holidayRevision = model.holidayRevision
+            eventRevision = model.events.revision
+            eventMode = model.events.mode
             if rebuilt {
                 cancelSnap()
                 timeline = model.calendarTimeline(firstWeekday: firstWeekday)
                 days.removeAll()
                 table.reloadData()
-            } else if changed {
-                let range = table.rows(in: table.visibleRect)
-                for row in range.location..<NSMaxRange(range) {
-                    if let view = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? CalendarWeekView {
-                        configure(view, row: row)
-                    }
-                }
+            } else if resized {
+                table.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<timeline.rows.count))
             }
-            if revision != model.calendarScrollRevision || rebuilt {
+            if revision != model.calendarScrollRevision || rebuilt || resized {
                 cancelSnap()
                 scrollSerial += 1
                 scrollTask?.cancel()
                 scrollTask = nil
-                let restoring = (revision == nil || rebuilt) ? model.calendarViewport : nil
+                let restoring = (revision == nil || rebuilt || (resized && !requestedNavigation)) ? model.calendarViewport : nil
                 let restoredMonth = model.calendarSnappedMonth
-                let animate = revision != nil && !rebuilt
+                let animate = revision != nil && !rebuilt && !resized
                 revision = model.calendarScrollRevision
                 table.layoutSubtreeIfNeeded()
                 if animate, let startingSelection = model.calendarScrollAnimationSelection,
@@ -197,6 +202,16 @@ struct CalendarTimelineView: NSViewRepresentable {
                     let layout = monthLayout(for: restoredMonth ?? model.calendarScrollTarget)
                     model.calendarSnappedMonth = layout?.month
                     if let layout { moveViewport(to: table.rect(ofRow: layout.weeks.lowerBound).minY) }
+                }
+            }
+            if changed || rebuilt {
+                // 行高变化会移动已复用的周行；完成视口恢复后刷新最终可见行。
+                table.layoutSubtreeIfNeeded()
+                let range = table.rows(in: table.visibleRect)
+                for row in range.location..<NSMaxRange(range) {
+                    if let view = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? CalendarWeekView {
+                        configure(view, row: row)
+                    }
                 }
             }
         }
@@ -365,7 +380,7 @@ struct CalendarTimelineView: NSViewRepresentable {
                 // 整月和自由浏览共享行高，吸附与中断只移动视口，不重排日期。
                 let weeks = timeline.weekRows(inMonth: month)!
                 let scale = tableView.window?.backingScaleFactor ?? 2
-                let unit = CalendarTimelineView.viewportHeight * scale / CGFloat(weeks.count)
+                let unit = eventMode.viewportHeight * scale / CGFloat(weeks.count)
                 let index = CGFloat(row - weeks.lowerBound)
                 return (floor((index + 1) * unit) - floor(index * unit)) / scale
             }
@@ -440,6 +455,7 @@ final class CalendarWeekView: NSView {
             button.configure(day: day, annotations: options.annotations(for: day),
                 holiday: options.holidaySchedule ? model.holidays.day(day) : nil,
                 isInMonth: model.engine.calendar.isDate(day.date, equalTo: sectionMonth, toGranularity: .month),
+                events: model.events.days[day.date] ?? [], mode: model.events.mode,
                 today: model.today, selection: model.selection, enabled: model.engine.isSupported(day.date)) {
                     [weak model] in model?.selectVisibleDay(day.date)
                 }
@@ -451,7 +467,8 @@ final class CalendarWeekView: NSView {
         let inset = CalendarTimelineView.contentInset
         let width = (bounds.width - 2 * inset) / 7
         for (index, button) in buttons.enumerated() {
-            button.frame = NSRect(x: inset + CGFloat(index) * width, y: (bounds.height - 46) / 2, width: width, height: 46)
+            let height = 46 + button.eventMode.extraRowHeight
+            button.frame = NSRect(x: inset + CGFloat(index) * width, y: (bounds.height - height) / 2, width: width, height: height)
         }
     }
 
@@ -463,7 +480,7 @@ final class CalendarWeekView: NSView {
     override func viewDidChangeEffectiveAppearance() { needsDisplay = true }
 }
 
-private final class CalendarDayButton: NSButton, CalendarZoomParticipant {
+final class CalendarDayButton: NSButton, CalendarZoomParticipant {
     var zoomHiddenDays: Set<Int> = []
     private var day: DayInfo?
     private var annotation: Annotation?
@@ -472,6 +489,9 @@ private final class CalendarDayButton: NSButton, CalendarZoomParticipant {
     private var selected = false
     private var isInMonth = true
     private var onSelect: (() -> Void)?
+    private(set) var events: [CalendarEvent] = []
+    private(set) var eventMode = CalendarEventDisplay.hidden
+    var date: Date? { day?.date }
     override var isFlipped: Bool { true }
     private static let accent = NSColor(srgbRed: 0.89, green: 0.20, blue: 0.15, alpha: 1)
 
@@ -488,11 +508,14 @@ private final class CalendarDayButton: NSButton, CalendarZoomParticipant {
 
     func configure(day: DayInfo, annotations: [Annotation], holiday: HolidayDay?,
                    isInMonth: Bool,
+                   events: [CalendarEvent], mode: CalendarEventDisplay,
                    today: Date, selection: Date, enabled: Bool, onSelect: @escaping () -> Void) {
         self.day = day
         annotation = annotations.first
         self.holiday = holiday
         self.isInMonth = isInMonth
+        self.events = events
+        eventMode = mode
         self.today = day.date == today
         selected = day.date == selection
         isEnabled = enabled
@@ -502,9 +525,14 @@ private final class CalendarDayButton: NSButton, CalendarZoomParticipant {
         var labels = [title, day.lunarFull] + annotations.map(\.title)
         if let holiday { labels.append(holiday.detail) }
         if self.today { labels.append("今天") }
+        if mode != .hidden, !events.isEmpty {
+            labels.append("\(events.count)项日程")
+            labels += events.map(\.title)
+        }
         setAccessibilityLabel(labels.joined(separator: "，"))
         setAccessibilityValue(selected ? "已选中" : "")
         needsDisplay = true
+        superview?.needsLayout = true
     }
 
     @objc private func selectDay() { onSelect?() }
@@ -540,6 +568,9 @@ private final class CalendarDayButton: NSButton, CalendarZoomParticipant {
             drawText(holiday.badge, rect: NSRect(x: bounds.width - 9, y: 3, width: 9, height: 10),
                      font: .systemFont(ofSize: 8, weight: .medium),
                      color: !isInMonth ? muted : holiday.isOffDay ? Self.accent : .secondaryLabelColor)
+        }
+        if eventMode != .hidden, !events.isEmpty {
+            CalendarEventDrawing.draw(events: events, mode: eventMode, in: self, muted: !isInMonth)
         }
     }
 

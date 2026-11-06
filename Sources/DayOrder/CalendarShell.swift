@@ -7,11 +7,13 @@ struct CalendarShell: NSViewRepresentable {
     let footer: AnyView
     let yearOverview: Bool
     let showingSettings: Bool
+    let calendarHeight: CGFloat
 
     func makeNSView(context: Context) -> CalendarShellView { CalendarShellView() }
 
     func updateNSView(_ view: CalendarShellView, context: Context) {
         view.setPage(yearOverview: yearOverview, showingSettings: showingSettings)
+        view.calendarHeight = calendarHeight
         view.header.rootView = AnyView(header.frame(width: 320).fixedSize(horizontal: false, vertical: true))
         view.content.rootView = content
         view.footer.rootView = AnyView(footer.frame(width: 320).fixedSize(horizontal: false, vertical: true))
@@ -32,6 +34,7 @@ final class CalendarShellView: NSView {
     private let headerClip = CalendarShellClipView()
     private let footerClip = CalendarShellClipView()
     private var yearOverview = false
+    var calendarHeight = CalendarTimelineView.viewportHeight
     private var settingsHeight: CGFloat?
     var transitionCard: NSRect?
     var transitionHeight: CGFloat?
@@ -83,7 +86,7 @@ final class CalendarShellView: NSView {
         let bottom = footer.fittingSize.height
         return Geometry(top: top, bottom: bottom,
                         size: NSSize(width: 320, height: settingsHeight ?? (yearOverview ? 430
-                                     : top + CalendarTimelineView.viewportHeight + bottom)))
+                                     : top + calendarHeight + bottom)))
     }
 
     var naturalSize: NSSize { (animationGeometry ?? measureGeometry()).size }

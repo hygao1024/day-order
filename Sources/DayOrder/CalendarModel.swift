@@ -10,6 +10,7 @@ protocol CalendarOverviewFocusSource: AnyObject {
 @MainActor
 final class CalendarModel: ObservableObject {
     let engine: CalendarEngine
+    let events: SystemCalendarEvents
     // 只缓存当前星期起始方式的不可变行索引；页面生命周期仍由各自的视图拥有。
     private var timelineIndex: CalendarTimeline?
     #if DEBUG
@@ -111,7 +112,9 @@ final class CalendarModel: ObservableObject {
         return year
     }
 
-    init(engine: CalendarEngine, now: Date = Date(), holidayCacheDirectory: URL? = nil) {
+    init(engine: CalendarEngine, now: Date = Date(), holidayCacheDirectory: URL? = nil,
+         events: SystemCalendarEvents = SystemCalendarEvents()) {
+        self.events = events
         let directory = holidayCacheDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("DayOrder/holidays", isDirectory: true)
         holidayRepository = HolidayRepository(cacheDirectory: directory)

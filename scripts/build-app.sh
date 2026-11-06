@@ -32,6 +32,7 @@ cat > "$app_path/Contents/Info.plist" <<'PLIST'
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSCalendarsFullAccessUsageDescription</key><string>日序读取系统日历，在对应日期下展示你的日程，不会新增、修改或删除事件。</string>
   <key>SUFeedURL</key><string>https://github.com/hygao1024/day-order/releases/latest/download/appcast.xml</string>
   <key>SUEnableAutomaticChecks</key><false/>
   <key>SUAutomaticallyUpdate</key><false/>
