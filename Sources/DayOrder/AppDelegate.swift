@@ -77,7 +77,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             #endif
-            let host = CalendarHostingController(rootView: root)
+            // 新内容可能先于窗口增高完成布局，始终从顶部排布，避免临时居中。
+            let host = CalendarHostingController(rootView: AnyView(root.frame(minHeight: 0, maxHeight: .infinity, alignment: .top)))
             hostingController = host
             let presentation = CalendarPresentationController(host: host, model: model, defaults: defaults)
             presentationController = presentation
@@ -245,6 +246,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // showPanel 会刷新真实日期；快照随后固定时钟，使用同一生产视图。
             model.today = model.engine.date(2026, 10, 23)
             model.select(model.today)
+            if ProcessInfo.processInfo.arguments.contains("--calendar-marker-morph-smoke") {
+                guard let source = smokeCalendarSource, let presentation = presentationController else {
+                    throw CocoaError(.coderInvalidValue)
+                }
+                defaults.set(1, forKey: "firstWeekday")
+                try await CalendarMarkerMorphSmoke.verify(model: model, presentation: presentation,
+                    source: source, defaults: defaults, directory: directory) { view, name in
+                        try self.saveViewSnapshot(view, name: name, to: directory)
+                    }
+                try "日程胶囊、横线、圆点连续形变、淡出、快速接续和实际像素绘制检查通过。\n"
+                    .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+                return
+            }
+            if ProcessInfo.processInfo.arguments.contains("--calendar-mode-animation-smoke") {
+                guard let source = smokeCalendarSource, let presentation = presentationController else {
+                    throw CocoaError(.coderInvalidValue)
+                }
+                defaults.set(1, forKey: "firstWeekday")
+                try await CalendarModeAnimationSmoke.verify(model: model, presentation: presentation, panel: panel,
+                    source: source, defaults: defaults, directory: directory, reopen: { self.showPanel() }) { view, name in
+                        try self.saveViewSnapshot(view, name: name, to: directory)
+                    }
+                try "四档非线性缩放、日期连续绘制、重定向、设置交接、取消和减少动态效果检查通过。\n"
+                    .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+                return
+            }
+            if ProcessInfo.processInfo.arguments.contains("--calendar-mode-smoke") {
+                guard let source = smokeCalendarSource, let root = hostingController?.view else {
+                    throw CocoaError(.coderInvalidValue)
+                }
+                model.today = model.engine.date(2026, 11, 5)
+                model.select(model.today)
+                try await Task.sleep(for: .milliseconds(100))
+                try await CalendarModeSmoke.verify(events: model.events, source: source, engine: model.engine, root: root) {
+                    try await self.saveSnapshot($0, to: directory)
+                }
+                try "四档按钮循环、权限检测与请求、隐藏跳过权限和迟到结果检查通过。\n"
+                    .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.arguments.contains("--calendar-events-smoke") {
                 try await verifyCalendarEvents(directory: directory)
                 try "系统日历权限边界、四档显示、固定布局、跨日数据、刷新与迟到结果验证通过。\n"
@@ -522,7 +566,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let model, let source = smokeCalendarSource, let root = hostingController?.view,
               let presentation = presentationController else { throw CocoaError(.coderInvalidValue) }
         let events = model.events
-        let coordinator = CalendarEventMenu.Coordinator(events: events)
         let savedSelection = model.selection
         let savedToday = model.today
         let savedWeekday = defaults.object(forKey: "firstWeekday")
@@ -544,10 +587,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try await Task.sleep(for: .milliseconds(10))
             }
         }
-        func settled() async throws { try await wait { !events.loading } }
+        func settled() async throws {
+            try await wait { !events.loading }
+            events.permissionSettingsPresented = false
+        }
         func choose(_ mode: CalendarEventDisplay) {
-            let menu = coordinator.makeMenu()
-            menu.performActionForItem(at: CalendarEventDisplay.allCases.firstIndex(of: mode)!)
+            guard let button = descendants(root).compactMap({ $0 as? CalendarEventModeButton }).first else {
+                preconditionFailure("未找到真实日程切换按钮")
+            }
+            for _ in 0..<4 where events.mode != mode { button.performClick(nil) }
         }
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
         var local = Calendar(identifier: .gregorian)
@@ -583,7 +631,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try await settled()
         try require(events.authorization == .denied && events.days.isEmpty, "拒绝权限必须清空日程")
         try require(await source.reads == readsBeforeDenied, "拒绝权限后仍调用了读取边界")
-        try require(coordinator.makeMenu().items.contains { $0.title.contains("权限设置") }, "拒绝后缺少恢复入口")
+        try require(events.statusText.contains("系统设置"), "拒绝后缺少恢复说明")
         for access in [CalendarAuthorization.restricted, .writeOnly] {
             await source.configure(access: access, grant: .denied)
             choose(.compact)

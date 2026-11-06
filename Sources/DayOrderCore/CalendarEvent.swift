@@ -3,6 +3,15 @@ import Foundation
 public enum CalendarEventDisplay: String, CaseIterable, Sendable {
     case detailed, compact, dots, hidden
 
+    public var next: Self {
+        switch self {
+        case .detailed: .compact
+        case .compact: .dots
+        case .dots: .hidden
+        case .hidden: .detailed
+        }
+    }
+
     public var title: String {
         switch self {
         case .detailed: "详细"

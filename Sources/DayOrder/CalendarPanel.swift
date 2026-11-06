@@ -49,7 +49,7 @@ final class CalendarPanel: NSPanel {
         let x = min(max(rect.midX - size.width / 2, visible.minX), max(visible.minX, visible.maxX - size.width))
         let top = min(rect.minY - 6, visible.maxY)
         let y = max(visible.minY, top - size.height)
-        // 尺寸回调发生在布局期间；同步绘制会重入旧约束并把顶部偏移一个高度差。
+        // 调整尺寸时仅更新几何；同步绘制可能重入尚未稳定的约束。
         setFrame(NSRect(origin: NSPoint(x: x, y: y), size: size), display: false)
     }
 

@@ -6,6 +6,15 @@ import Testing
     let engine = try! CalendarEngine()
     let zone = TimeZone(identifier: "America/Los_Angeles")!
 
+    @Test func displayCyclesInRequestedOrder() {
+        var mode = CalendarEventDisplay.hidden
+        for expected in [CalendarEventDisplay.detailed, .compact, .dots, .hidden,
+                         .detailed, .compact, .dots, .hidden] {
+            mode = mode.next
+            #expect(mode == expected)
+        }
+    }
+
     func date(_ value: String) -> Date { ISO8601DateFormatter().date(from: value)! }
     func event(_ id: String, _ start: String, _ end: String, allDay: Bool = false, title: String = "事件") -> CalendarEvent {
         CalendarEvent(id: id, title: title, start: date(start), end: date(end), allDay: allDay,

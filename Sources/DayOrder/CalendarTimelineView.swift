@@ -160,7 +160,13 @@ struct CalendarTimelineView: NSViewRepresentable {
                 days.removeAll()
                 table.reloadData()
             } else if resized {
-                table.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<timeline.rows.count))
+                // 原生表格先同步落到真实端点；可见运动只由展示层的弹簧拥有。
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0
+                    context.allowsImplicitAnimation = false
+                    table.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<timeline.rows.count))
+                    table.layoutSubtreeIfNeeded()
+                }
             }
             if revision != model.calendarScrollRevision || rebuilt || resized {
                 cancelSnap()
@@ -482,6 +488,7 @@ final class CalendarWeekView: NSView {
 
 final class CalendarDayButton: NSButton, CalendarZoomParticipant {
     var zoomHiddenDays: Set<Int> = []
+    var snapshotHidesEventMarkers = false
     private var day: DayInfo?
     private var annotation: Annotation?
     private var holiday: HolidayDay?
@@ -492,6 +499,10 @@ final class CalendarDayButton: NSButton, CalendarZoomParticipant {
     private(set) var events: [CalendarEvent] = []
     private(set) var eventMode = CalendarEventDisplay.hidden
     var date: Date? { day?.date }
+    var eventMarkers: [CalendarEventMarker] {
+        CalendarEventDrawing.markers(events: events, mode: eventMode, width: bounds.width,
+                                     muted: !isInMonth, dark: effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+    }
     override var isFlipped: Bool { true }
     private static let accent = NSColor(srgbRed: 0.89, green: 0.20, blue: 0.15, alpha: 1)
 
@@ -569,7 +580,7 @@ final class CalendarDayButton: NSButton, CalendarZoomParticipant {
                      font: .systemFont(ofSize: 8, weight: .medium),
                      color: !isInMonth ? muted : holiday.isOffDay ? Self.accent : .secondaryLabelColor)
         }
-        if eventMode != .hidden, !events.isEmpty {
+        if !snapshotHidesEventMarkers, eventMode != .hidden, !events.isEmpty {
             CalendarEventDrawing.draw(events: events, mode: eventMode, in: self, muted: !isInMonth)
         }
     }

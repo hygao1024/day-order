@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""运行已构建的 Debug 应用，同时检查功能退出码和布局循环诊断。"""
+"""运行已构建的 Debug 应用，检查功能退出码、布局循环与重入诊断。"""
 
 import argparse
 from pathlib import Path
@@ -11,6 +11,9 @@ def check_diagnostics(log: str) -> None:
     cycles = [line for line in log.splitlines() if "AttributeGraph: cycle detected" in line]
     if cycles:
         raise RuntimeError(f"检测到 {len(cycles)} 条 SwiftUI 布局循环警告。")
+    reentries = [line for line in log.splitlines() if "It's not legal to call -layoutSubtreeIfNeeded" in line]
+    if reentries:
+        raise RuntimeError(f"检测到 {len(reentries)} 条 AppKit 布局重入警告。")
 
 
 def main() -> int:
@@ -38,7 +41,7 @@ def main() -> int:
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(f"冒烟检查失败：{error} 日志：{log_path}", file=sys.stderr)
         return 1
-    print(f"冒烟检查通过，未检测到布局循环警告。日志：{log_path}")
+    print(f"冒烟检查通过，未检测到布局循环或重入警告。日志：{log_path}")
     return 0
 
 

@@ -2,66 +2,17 @@ import AppKit
 import DayOrderCore
 import SwiftUI
 
-struct CalendarEventMenu: NSViewRepresentable {
+struct CalendarEventToggle: NSViewRepresentable {
     @ObservedObject var events: SystemCalendarEvents
 
     func makeNSView(context: Context) -> CalendarEventModeButton {
-        let button = CalendarEventModeButton(frame: .zero)
-        button.target = context.coordinator
-        button.action = #selector(Coordinator.openMenu(_:))
-        return button
+        CalendarEventModeButton(events: events)
     }
 
     func updateNSView(_ button: CalendarEventModeButton, context: Context) {
         button.mode = events.mode
-        button.toolTip = "日程显示：\(events.mode.title) · \(events.statusText)"
-        button.setAccessibilityLabel("日程显示，\(events.mode.title)")
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator(events: events) }
-
-    @MainActor final class Coordinator: NSObject {
-        let events: SystemCalendarEvents
-        init(events: SystemCalendarEvents) { self.events = events }
-
-        @objc func openMenu(_ sender: NSButton) {
-            let menu = makeMenu()
-            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY + 2), in: sender)
-        }
-
-        func makeMenu() -> NSMenu {
-            let menu = NSMenu(title: "日程显示")
-            for mode in CalendarEventDisplay.allCases {
-                let item = NSMenuItem(title: mode.title, action: #selector(choose(_:)), keyEquivalent: "")
-                item.representedObject = mode.rawValue
-                item.target = self
-                item.state = events.mode == mode ? .on : .off
-                menu.addItem(item)
-            }
-            menu.addItem(.separator())
-            let status = NSMenuItem(title: events.statusText, action: nil, keyEquivalent: "")
-            status.isEnabled = false
-            menu.addItem(status)
-            if events.authorization == .denied || events.authorization == .restricted || events.authorization == .writeOnly {
-                let item = NSMenuItem(title: "打开系统日历权限设置…", action: #selector(openSettings), keyEquivalent: "")
-                item.target = self
-                menu.addItem(item)
-            }
-            if events.errorMessage != nil || events.authorization == .fullAccess {
-                let item = NSMenuItem(title: "重新读取日程", action: #selector(retry), keyEquivalent: "")
-                item.target = self
-                item.isEnabled = events.mode != .hidden
-                menu.addItem(item)
-            }
-            return menu
-        }
-
-        @objc func choose(_ sender: NSMenuItem) {
-            guard let raw = sender.representedObject as? String, let mode = CalendarEventDisplay(rawValue: raw) else { return }
-            events.choose(mode)
-        }
-        @objc private func openSettings() { events.openPrivacySettings() }
-        @objc private func retry() { events.choose(events.mode) }
+        button.toolTip = "日程显示：\(events.mode.title) · 点击切换为\(events.mode.next.title) · \(events.statusText)"
+        button.setAccessibilityLabel("日程显示，当前\(events.mode.title)，点击切换为\(events.mode.next.title)")
     }
 }
 
@@ -75,6 +26,11 @@ final class CalendarEventModeButton: NSButton {
         isBordered = false
         title = ""
         setButtonType(.momentaryChange)
+    }
+    convenience init(events: SystemCalendarEvents) {
+        self.init(frame: .zero)
+        target = events
+        action = #selector(SystemCalendarEvents.advance)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
@@ -119,6 +75,46 @@ final class CalendarEventModeButton: NSButton {
     override func drawFocusRingMask() { NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill() }
 }
 
+struct CalendarEventMarkerStyle: Animatable {
+    var frame: CGRect
+    var opacity: CGFloat
+    var fillOpacity: CGFloat
+    var detailOpacity: CGFloat
+
+    typealias AnimatableData = AnimatablePair<CGRect.AnimatableData, AnimatablePair<CGFloat, AnimatablePair<CGFloat, CGFloat>>>
+    var animatableData: AnimatableData {
+        get { AnimatablePair(frame.animatableData, AnimatablePair(opacity, AnimatablePair(fillOpacity, detailOpacity))) }
+        set {
+            frame.animatableData = newValue.first
+            opacity = newValue.second.first
+            fillOpacity = newValue.second.second.first
+            detailOpacity = newValue.second.second.second
+        }
+    }
+
+    var collapsed: Self {
+        var result = self
+        let diameter: CGFloat = 3.5
+        let center = CGPoint(x: frame.midX, y: min(frame.midY, 46 - diameter / 2))
+        result.frame = CGRect(x: center.x - diameter / 2, y: center.y - diameter / 2, width: diameter, height: diameter)
+        result.opacity = 0
+        result.fillOpacity = 0.85
+        result.detailOpacity = 0
+        return result
+    }
+}
+
+struct CalendarEventMarker {
+    struct ID: Hashable {
+        let event: String
+        let start: Date
+    }
+    let id: ID
+    var style: CalendarEventMarkerStyle
+    let color: CalendarEvent.Color
+    let title: String
+}
+
 @MainActor enum CalendarEventDrawing {
     static func frames(count: Int, mode: CalendarEventDisplay, width: CGFloat) -> [NSRect] {
         switch mode {
@@ -136,49 +132,68 @@ final class CalendarEventModeButton: NSButton {
         }
     }
 
+    static func markers(events: [CalendarEvent], mode: CalendarEventDisplay, width: CGFloat,
+                        muted: Bool, dark: Bool) -> [CalendarEventMarker] {
+        frames(count: events.count, mode: mode, width: width).enumerated().map { index, rect in
+            let event = events[index]
+            return CalendarEventMarker(id: .init(event: event.id, start: event.start),
+                style: CalendarEventMarkerStyle(frame: rect, opacity: muted ? 0.25 : 1,
+                    fillOpacity: mode == .detailed ? (dark ? 0.28 : 0.16) : 0.85,
+                    detailOpacity: mode == .detailed ? 1 : 0),
+                color: event.color, title: index == 1 && events.count > 2 && mode == .detailed ? "+\(events.count - 1)项" : event.title)
+        }
+    }
+
     static func draw(events: [CalendarEvent], mode: CalendarEventDisplay, in view: NSView, muted: Bool) {
         let dark = view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        for (index, rect) in frames(count: events.count, mode: mode, width: view.bounds.width).enumerated() {
-            let event = events[index]
-            let tint = NSColor(srgbRed: event.color.red, green: event.color.green, blue: event.color.blue, alpha: 1)
-            NSGraphicsContext.saveGraphicsState()
-            defer { NSGraphicsContext.restoreGraphicsState() }
-            let cg = NSGraphicsContext.current!.cgContext
-            cg.clip(to: view.bounds)
-            cg.setAlpha(muted ? 0.25 : 1)
-            let pill = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
-            tint.withAlphaComponent(mode == .detailed ? (dark ? 0.28 : 0.16) : 0.85).setFill()
-            pill.fill()
-            guard mode == .detailed else { continue }
-            let badge = NSRect(x: rect.minX + 1, y: rect.minY + 1, width: 10, height: 10)
-            tint.setFill()
-            NSBezierPath(ovalIn: badge).fill()
-            let glyph = NSImage(systemSymbolName: "calendar", accessibilityDescription: nil)?
-                .withSymbolConfiguration(.init(pointSize: 6, weight: .medium))
-            glyph?.withSymbolConfiguration(.init(paletteColors: [.white]))?
-                .draw(in: badge.insetBy(dx: 1.5, dy: 1.5), from: .zero, operation: .sourceOver,
-                      fraction: 1, respectFlipped: true, hints: nil)
-            let textRect = NSRect(x: rect.minX + 12, y: rect.minY, width: max(0, rect.width - 14), height: rect.height)
-            cg.saveGState()
-            cg.clip(to: textRect)
-            cg.beginTransparencyLayer(auxiliaryInfo: nil)
-            let more = index == 1 && events.count > 2
-            let title = more ? "+\(events.count - 1)项" : event.title
-            let foreground = tint.blended(withFraction: dark ? 0.55 : 0.40, of: dark ? .white : .black) ?? .labelColor
-            let text = NSAttributedString(string: title, attributes: [
-                .font: NSFont.systemFont(ofSize: 10, weight: .medium), .foregroundColor: foreground
-            ])
-            text.draw(at: NSPoint(x: textRect.minX, y: textRect.midY - text.size().height / 2))
-            if text.size().width > textRect.width,
-               let fade = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                                     colors: [NSColor.black.cgColor, NSColor.clear.cgColor] as CFArray,
-                                     locations: [0, 1]) {
-                cg.setBlendMode(.destinationIn)
-                cg.drawLinearGradient(fade, start: CGPoint(x: textRect.maxX - 5, y: 0),
-                                      end: CGPoint(x: textRect.maxX, y: 0), options: [.drawsBeforeStartLocation])
-            }
-            cg.endTransparencyLayer()
-            cg.restoreGState()
+        for marker in markers(events: events, mode: mode, width: view.bounds.width, muted: muted, dark: dark) {
+            draw(marker: marker, style: marker.style, dark: dark)
         }
+    }
+
+    static func draw(marker: CalendarEventMarker, style: CalendarEventMarkerStyle, dark: Bool) {
+        let rect = style.frame
+        guard rect.width > 0, rect.height > 0, style.opacity > 0.000001,
+              let cg = NSGraphicsContext.current?.cgContext else { return }
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        let opacity = min(1, max(0, style.opacity))
+        let tint = NSColor(srgbRed: marker.color.red, green: marker.color.green, blue: marker.color.blue, alpha: 1)
+        cg.setAlpha(opacity)
+        let pill = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
+        tint.withAlphaComponent(min(1, max(0, style.fillOpacity))).setFill()
+        pill.fill()
+        let room = min(1, max(0, (rect.height - 3.5) / 8.5)) * min(1, max(0, (rect.width - 14) / 12))
+        let details = min(1, max(0, style.detailOpacity)) * room
+        guard details > 0.000001 else { return }
+        pill.addClip()
+        cg.setAlpha(opacity * details)
+        let diameter = min(10, max(0, rect.height - 2))
+        let badge = CGRect(x: rect.minX + 1, y: rect.midY - diameter / 2, width: diameter, height: diameter)
+        tint.setFill()
+        NSBezierPath(ovalIn: badge).fill()
+        NSImage(systemSymbolName: "calendar", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 6, weight: .medium))?
+            .withSymbolConfiguration(.init(paletteColors: [.white]))?
+            .draw(in: badge.insetBy(dx: 1.5, dy: 1.5), from: .zero, operation: .sourceOver,
+                  fraction: 1, respectFlipped: true, hints: nil)
+        let textRect = CGRect(x: rect.minX + 12, y: rect.minY, width: max(0, rect.width - 14), height: rect.height)
+        cg.saveGState()
+        cg.clip(to: textRect)
+        cg.beginTransparencyLayer(auxiliaryInfo: nil)
+        let foreground = tint.blended(withFraction: dark ? 0.55 : 0.40, of: dark ? .white : .black) ?? .labelColor
+        let text = NSAttributedString(string: marker.title, attributes: [
+            .font: NSFont.systemFont(ofSize: 10, weight: .medium), .foregroundColor: foreground
+        ])
+        text.draw(at: CGPoint(x: textRect.minX, y: textRect.midY - text.size().height / 2))
+        if text.size().width > textRect.width,
+           let fade = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                 colors: [NSColor.black.cgColor, NSColor.clear.cgColor] as CFArray, locations: [0, 1]) {
+            cg.setBlendMode(.destinationIn)
+            cg.drawLinearGradient(fade, start: CGPoint(x: textRect.maxX - 5, y: 0),
+                                  end: CGPoint(x: textRect.maxX, y: 0), options: [.drawsBeforeStartLocation])
+        }
+        cg.endTransparencyLayer()
+        cg.restoreGState()
     }
 }

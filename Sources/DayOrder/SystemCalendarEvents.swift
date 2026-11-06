@@ -64,6 +64,7 @@ final class SystemCalendarEvents: NSObject, ObservableObject {
     @Published private(set) var loading = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var revision = 0
+    @Published var permissionSettingsPresented = false
     private(set) var days: [Date: [CalendarEvent]] = [:]
     private let source: any SystemCalendarSource
     private let defaults: UserDefaults
@@ -87,6 +88,7 @@ final class SystemCalendarEvents: NSObject, ObservableObject {
     deinit { NotificationCenter.default.removeObserver(self) }
 
     var statusText: String {
+        if mode == .hidden { return "日程已隐藏" }
         if let errorMessage { return errorMessage }
         if loading { return "正在读取系统日历…" }
         switch authorization {
@@ -95,21 +97,24 @@ final class SystemCalendarEvents: NSObject, ObservableObject {
         case .restricted: return "系统限制了日历访问"
         case .writeOnly: return "读取日程需要完整日历访问权限"
         case .fullAccess:
-            if mode == .hidden { return "日程已隐藏" }
             return days.isEmpty ? "当前浏览范围没有日程" : "系统日历已连接"
         }
     }
 
     func update(month: Date, engine: CalendarEngine) {
+        let restoring = context == nil
         context = (month, engine)
-        reload()
+        reload(offerSettings: restoring && mode != .hidden)
     }
 
     func choose(_ mode: CalendarEventDisplay) {
+        permissionSettingsPresented = false
         self.mode = mode
         defaults.set(mode.rawValue, forKey: "calendarEventDisplay")
-        reload(requestAccess: mode != .hidden)
+        reload(offerSettings: mode != .hidden)
     }
+
+    @objc func advance() { choose(mode.next) }
 
     func openPrivacySettings() {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars")!)
@@ -127,6 +132,7 @@ final class SystemCalendarEvents: NSObject, ObservableObject {
         permissionTask?.cancel()
         permissionTask = nil
         NotificationCenter.default.removeObserver(self)
+        permissionSettingsPresented = false
         clear()
         loading = false
     }
@@ -137,7 +143,7 @@ final class SystemCalendarEvents: NSObject, ObservableObject {
         revision += 1
     }
 
-    private func reload(requestAccess: Bool = false, debounce: Bool = false) {
+    private func reload(offerSettings: Bool = false, debounce: Bool = false) {
         guard !stopped else { return }
         generation += 1
         let serial = generation
@@ -157,9 +163,11 @@ final class SystemCalendarEvents: NSObject, ObservableObject {
             defer { if generation == serial { loading = false; loadTask = nil } }
             do {
                 if debounce { try await Task.sleep(for: .milliseconds(150)) }
+                guard !Task.isCancelled, generation == serial else { return }
                 var access = await source.authorization()
                 try Task.checkCancellation()
-                if requestAccess, access == .notDetermined || access == .writeOnly {
+                let requestedPermission = access == .notDetermined || access == .writeOnly
+                if requestedPermission {
                     if permissionTask == nil {
                         permissionTask = Task { try await source.requestAccess() }
                     }
@@ -169,7 +177,14 @@ final class SystemCalendarEvents: NSObject, ObservableObject {
                 }
                 guard !Task.isCancelled, generation == serial else { return }
                 authorization = access
-                guard access == .fullAccess else { clear(); return }
+                guard access == .fullAccess else {
+                    clear()
+                    // 拒绝或受限后只能引导设置；切月和后台通知不重复弹出恢复提示。
+                    if offerSettings && !requestedPermission {
+                        permissionSettingsPresented = true
+                    }
+                    return
+                }
                 var local = Calendar(identifier: .gregorian)
                 local.timeZone = .current
                 let parts = context.engine.calendar.dateComponents([.year, .month], from: context.month)
@@ -180,12 +195,16 @@ final class SystemCalendarEvents: NSObject, ObservableObject {
                                      to: local.date(byAdding: .month, value: 2, to: month)!)!
                 let range = DateInterval(start: start, end: end)
                 let values = try await source.events(in: range)
+                guard !Task.isCancelled, generation == serial else { return }
                 let currentAccess = await source.authorization()
                 guard !Task.isCancelled, generation == serial else { return }
                 authorization = currentAccess
                 guard currentAccess == .fullAccess else { clear(); return }
-                days = CalendarEventIndex(events: values, range: range, timeZone: local.timeZone, engine: context.engine).days
-                revision += 1
+                let next = CalendarEventIndex(events: values, range: range, timeZone: local.timeZone, engine: context.engine).days
+                if next != days {
+                    days = next
+                    revision += 1
+                }
             } catch {
                 guard !Task.isCancelled, generation == serial else { return }
                 permissionTask = nil

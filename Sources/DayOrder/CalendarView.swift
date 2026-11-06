@@ -35,6 +35,14 @@ struct CalendarView: View {
         .task(id: model.month) { events.update(month: model.month, engine: model.engine) }
         .onChange(of: menuBarDisplay) { updateMenuBar() }
         .onChange(of: menuBarDateFormat) { updateMenuBar() }
+        .alert("需要日历访问权限", isPresented: $events.permissionSettingsPresented) {
+            Button("打开系统设置") { events.openPrivacySettings() }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text(events.authorization == .restricted
+                 ? "日历访问受系统限制，请检查系统设置或管理策略。"
+                 : "请在系统设置的隐私与安全性中，允许日序访问日历。")
+        }
         .onExitCommand {
             if model.showingSettings { model.showingSettings = false }
             else if model.showingYearOverview { model.dismissYearLevel() }
@@ -82,7 +90,7 @@ struct CalendarView: View {
                 .help("浏览年份和月份")
                 .accessibilityLabel("年概览，当前\(String(month.year))年\(month.month)月")
                 Spacer(minLength: 0)
-                CalendarEventMenu(events: events).frame(width: 24, height: 24)
+                CalendarEventToggle(events: events).frame(width: 24, height: 24)
                 monthNavigation
             }
             HStack(spacing: 0) {

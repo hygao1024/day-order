@@ -54,6 +54,9 @@ final class CalendarShellView: NSView {
     var chromeCoverage: CGFloat {
         min(header.alphaValue + oldHeader.alphaValue, footer.alphaValue + oldFooter.alphaValue)
     }
+    #if DEBUG
+    var layoutObserver: ((CalendarShellView) -> Void)?
+    #endif
     override var isFlipped: Bool { true }
 
     override init(frame: NSRect) {
@@ -100,6 +103,9 @@ final class CalendarShellView: NSView {
         footer.frame = NSRect(x: 0, y: 0, width: 320, height: geometry.bottom)
         positionChrome(card: transitionCard ?? geometry.card,
                        height: transitionHeight ?? geometry.size.height)
+        #if DEBUG
+        layoutObserver?(self)
+        #endif
     }
 
     func beginAnimation() {
@@ -107,7 +113,16 @@ final class CalendarShellView: NSView {
         animationGeometry = measureGeometry()
     }
 
-    func prepareTransition() {
+    func prepareTransition(preservesChrome: Bool = false) {
+        if preservesChrome {
+            for (snapshot, live) in [(oldHeader, header), (oldFooter, footer)] {
+                snapshot.image = nil
+                snapshot.alphaValue = 0
+                live.alphaValue = 1
+            }
+            animationGeometry = nil
+            return
+        }
         // 中途重定向取当前合成结果，避免文字退回上一个页面的初始透明度。
         let headerImage = CalendarSnapshotImage.capture(headerClip, in: headerClip.bounds)
         let footerImage = CalendarSnapshotImage.capture(footerClip, in: footerClip.bounds)
