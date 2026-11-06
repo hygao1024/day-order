@@ -772,6 +772,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try await saveSnapshot("readme-calendar-dark", to: directory)
         try JSONSerialization.data(withJSONObject: geometry, options: [.prettyPrinted, .sortedKeys])
             .write(to: directory.appendingPathComponent("events-geometry.json"))
+        for month in [2, 8, 9] {
+            try await waitForCalendarTransition()
+            let output = directory.appendingPathComponent("zoom-\(month)")
+            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            try await CalendarEventZoomSmoke.verify(model: model, presentation: presentation, source: source,
+                defaults: defaults, directory: output, month: month) { view, name in
+                    try self.saveViewSnapshot(view, name: name, to: output)
+                }
+        }
     }
 
     private func verifyPanelPosition(directory: URL) async throws {

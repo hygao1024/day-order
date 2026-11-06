@@ -104,6 +104,7 @@ import DayOrderCore
             ]
             await source.configure(access: .fullAccess, values: values)
             try await Task.sleep(for: .milliseconds(100))
+            try await wait { model.calendarScrollAnimationSelection == nil && model.calendarSnappedMonth == model.month }
             for mode in [CalendarEventDisplay.detailed, .compact, .dots, .hidden] {
                 let counts = await source.counters()
                 try click()
@@ -123,7 +124,7 @@ import DayOrderCore
                     }
                     if mode == .compact || mode == .dots {
                         try require(sample.keys.filter { $0.contains(":repeat:") }.count == 2,
-                                    "同一事件标识的不同重复实例被合并")
+                                    "同一事件标识的不同重复实例被合并：月份=\(month)，模式=\(mode)，帧=\(index)，标记=\(sample.keys.sorted())")
                     }
                 }
                 switch mode {

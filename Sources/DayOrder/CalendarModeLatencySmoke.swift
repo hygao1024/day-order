@@ -75,6 +75,8 @@ import DayOrderCore
                     return held && presentation.isPreparedForSampling
                 }
                 let captured = presentation.eventCaptureCounters
+                try require(captured["fullBitmaps"] == before["fullBitmaps"],
+                            "日程切档仍额外采集整区位图，没有复用周行底图")
                 let weeks = model.calendarTimeline(firstWeekday: 1).weekRows(inMonth: model.month)!.count
                 try require(captured["snapshots"]! - before["snapshots"]! == 2 && captured["pdfs"] == before["pdfs"],
                             "日程切档仍重复采集端点或生成整页 PDF")
@@ -109,6 +111,7 @@ import DayOrderCore
                 try require((presentation.eventMarkerSample ?? [:]).values.contains { $0["opacity"]! > 0.05 && $0["opacity"]! < 0.99 },
                             "异步日程缺少真实展开中间态")
                 report.append(["month": month, "synchronousMS": synchronousMS, "snapshotMS": snapshotMS,
+                               "fullBitmapCaptures": captured["fullBitmaps"]! - before["fullBitmaps"]!,
                                "rowCaptures": rows, "markerRefreshWallMS": refreshMS,
                                "markerRefreshMS": presentation.eventMarkerRefreshMilliseconds - markerMS,
                                "preparationMS": presentation.preparationMilliseconds,

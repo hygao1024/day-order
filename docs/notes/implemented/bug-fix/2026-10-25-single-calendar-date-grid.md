@@ -18,6 +18,8 @@ Status: implemented
 
 此决定部分取代[日历画布缩放](../feature/2026-10-24-calendar-canvas-zoom.md)中的完整正文交叉淡化与逐帧矢量背景绘制。相机、弹簧节奏、邻月整体运动、重定向位置和速度、外壳与清理责任继续适用。
 
+[完整月历端点](2026-11-06-complete-month-zoom-snapshot.md)进一步要求月端点按逻辑视口准备全部周行；旧窗口裁切不能被当成日期在目标月历中不可见。
+
 ## Alternatives considered
 
 - 延长时长或调整淡化阈值：仍会同时展示两套错位日期，只改变重影持续时间。

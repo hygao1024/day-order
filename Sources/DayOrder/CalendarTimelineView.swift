@@ -612,7 +612,8 @@ final class CalendarDayButton: NSButton, CalendarZoomParticipant {
     func zoomAnchors(month: Int, in root: NSView) -> [CalendarZoomAnchor] {
         guard let day, day.year * 100 + day.month == month, isInMonth, isEnabled else { return [] }
         let circle = dayNumberFrame
-        guard visibleRect.intersects(circle) else { return [] }
+        guard let scroll = enclosingScrollView,
+              root.convert(scroll.bounds, from: scroll).intersects(root.convert(circle, from: self)) else { return [] }
         let weekend = day.weekday == 1 || day.weekday == 7
         return [CalendarZoomAnchor(day: day.day, frame: root.convert(circle, from: self),
             fontSize: 16, weight: NSFont.Weight.semibold.rawValue,

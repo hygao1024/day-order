@@ -31,6 +31,9 @@ extension CalendarZoomParticipant {
 
 @MainActor
 enum CalendarSnapshotImage {
+    #if DEBUG
+    static var timelineBitmapCount = 0
+    #endif
     static func rasterized(_ image: NSImage, scale: CGFloat) -> NSImage? {
         guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(ceil(image.size.width * scale)),
             pixelsHigh: Int(ceil(image.size.height * scale)), bitsPerSample: 8, samplesPerPixel: 4,
@@ -50,6 +53,10 @@ enum CalendarSnapshotImage {
     }
 
     static func capture(_ view: NSView, in rect: NSRect) -> NSImage? {
+        #if DEBUG
+        if let scroll = view as? NSScrollView,
+           scroll.documentView?.identifier?.rawValue == "calendarTimeline" { timelineBitmapCount += 1 }
+        #endif
         guard rect.width > 0, rect.height > 0,
               let bitmap = view.bitmapImageRepForCachingDisplay(in: rect) else { return nil }
         view.cacheDisplay(in: rect, to: bitmap)
@@ -109,6 +116,9 @@ private struct CalendarZoomSnapshot {
         #endif
         let views = descendants(root)
         guard let scroll = views.compactMap({ $0 as? NSScrollView }).first else { return nil }
+        if !capturesModeElements, scroll.documentView?.identifier?.rawValue == "calendarTimeline" {
+            return captureMonth(scroll, root: root, month: month)
+        }
         let card = root.convert(scroll.bounds, from: scroll)
         let headers = views.compactMap { $0 as? YearHeaderView }.filter { !$0.visibleRect.isEmpty }
             .map { root.convert($0.visibleRect, from: $0) }
@@ -119,15 +129,14 @@ private struct CalendarZoomSnapshot {
         }.filter { !$0.1.isEmpty }
         let anchors = participants.flatMap(\.1)
         let months = views.compactMap { $0 as? MonthPairView }.flatMap { $0.zoomMonthFrames(in: root) }
-        guard let content = CalendarSnapshotImage.capture(scroll, in: scroll.bounds) else { return nil }
-        let captions = participants.compactMap { $0.0.zoomCaption(month: month, in: root) }
-        let modeElements = capturesModeElements ? captureModeElements(scroll, root: root) : nil
-        if let modeElements {
-            var snapshot = Self(content: content, size: root.bounds.size, card: card, anchors: anchors, month: month,
+        if capturesModeElements, let mode = captureModeElements(scroll, root: root) {
+            var snapshot = Self(content: mode.content, size: root.bounds.size, card: card, anchors: anchors, month: month,
                                 backingScale: root.window?.backingScaleFactor ?? 2)
-            snapshot.modeElements = modeElements
+            snapshot.modeElements = mode.elements
             return snapshot
         }
+        guard let content = CalendarSnapshotImage.capture(scroll, in: scroll.bounds) else { return nil }
+        let captions = participants.compactMap { $0.0.zoomCaption(month: month, in: root) }
         participants.forEach { view, anchors in view.zoomHiddenDays = Set(anchors.map(\.day)); view.needsDisplay = true }
         defer { participants.forEach { view, _ in view.zoomHiddenDays = []; view.needsDisplay = true } }
         // 画布快照不包含焦点日期；正常显示和短淡化仍使用完整正文。
@@ -139,7 +148,6 @@ private struct CalendarZoomSnapshot {
                             overviewMonths: Dictionary(months, uniquingKeysWith: { first, _ in first }),
                             canvasContent: canvasContent, captions: captions,
                             backingScale: root.window?.backingScaleFactor ?? 2)
-        snapshot.modeElements = modeElements
         #if DEBUG
         for anchor in anchors where anchor.circle {
             let probe = CGRect(x: anchor.frame.midX - 3, y: anchor.frame.midY - 3, width: 6, height: 6)
@@ -159,13 +167,88 @@ private struct CalendarZoomSnapshot {
         return snapshot
     }
 
-    @MainActor private static func captureModeElements(_ scroll: NSScrollView, root: NSView) -> [CalendarModeElement]? {
+    @MainActor private static func captureMonth(_ scroll: NSScrollView, root: NSView, month: Int) -> Self? {
+        guard let table = scroll.documentView as? NSTableView,
+              let coordinator = table.delegate as? CalendarTimelineView.Coordinator else { return nil }
+        let viewport = table.convert(CGRect(origin: scroll.contentView.bounds.origin, size: scroll.bounds.size),
+                                     from: scroll.contentView)
+        let range = table.rows(in: viewport)
+        guard range.location != NSNotFound, range.length > 0 else { return nil }
+        var rows: [NSView] = []
+        for row in range.location..<NSMaxRange(range) {
+            guard table.rect(ofRow: row).intersection(viewport).height > 0.01 else { continue }
+            guard let view = table.view(atColumn: 0, row: row, makeIfNecessary: true) else { return nil }
+            if let week = view as? CalendarWeekView { coordinator.refreshEvents(in: week, row: row) }
+            view.layoutSubtreeIfNeeded()
+            rows.append(view)
+        }
+        let card = root.convert(scroll.bounds, from: scroll)
+        let scale = root.window?.backingScaleFactor ?? 2
+        // 按完整逻辑视口准备并逐周采集，旧年视图窗口不能裁掉月历末周。
+        func image(vector: Bool) -> NSImage? {
+            var parts: [(NSImage, CGRect)] = []
+            for row in rows {
+                let captured = vector ? NSImage(data: row.dataWithPDF(inside: row.bounds))
+                    : CalendarSnapshotImage.capture(row, in: row.bounds)
+                guard let captured else { return nil }
+                let frame = root.convert(row.bounds, from: row).offsetBy(dx: -card.minX, dy: -card.minY)
+                parts.append((captured, frame))
+            }
+            return NSImage(size: card.size, flipped: true) { _ in
+                for (image, frame) in parts {
+                    image.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1,
+                               respectFlipped: true, hints: nil)
+                }
+                return true
+            }
+        }
+        guard let full = image(vector: false), let content = CalendarSnapshotImage.rasterized(full, scale: scale) else { return nil }
+        let participants = rows.flatMap { $0.subviews.compactMap { $0 as? CalendarDayButton } }.map { button in
+            (button, button.zoomAnchors(month: month, in: root))
+        }.filter { !$0.1.isEmpty }
+        let hidden = participants.map { $0.0.zoomHiddenDays }
+        participants.forEach { button, anchors in button.zoomHiddenDays = Set(anchors.map(\.day)); button.needsDisplay = true }
+        defer {
+            for ((button, _), days) in zip(participants, hidden) {
+                button.zoomHiddenDays = days
+                button.needsDisplay = true
+            }
+        }
+        guard let canvas = image(vector: true) else { return nil }
+        let anchors = participants.flatMap(\.1)
+        var snapshot = Self(content: content, size: root.bounds.size, card: card, anchors: anchors,
+                            month: month, canvasContent: canvas, backingScale: scale)
+        #if DEBUG
+        if anchors.contains(where: \.circle),
+           let bitmap = CalendarSnapshotImage.rasterized(canvas, scale: scale)?.representations.first as? NSBitmapImageRep {
+            for anchor in anchors where anchor.circle {
+                let center = CGPoint(x: anchor.frame.midX - card.minX, y: anchor.frame.midY - card.minY)
+                let probe = CGRect(x: center.x - 3, y: center.y - 3, width: 6, height: 6)
+                    .intersection(CGRect(origin: .zero, size: card.size))
+                guard !probe.isNull else { continue }
+                for y in Int(probe.minY * scale)..<Int(probe.maxY * scale) {
+                    for x in Int(probe.minX * scale)..<Int(probe.maxX * scale) {
+                        if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                           color.redComponent > 0.6, color.greenComponent < 0.4, color.blueComponent < 0.4 {
+                            snapshot.suppressedCircleInk += 1
+                        }
+                    }
+                }
+            }
+        }
+        #endif
+        return snapshot
+    }
+
+    @MainActor private static func captureModeElements(_ scroll: NSScrollView, root: NSView)
+        -> (elements: [CalendarModeElement], content: NSImage)? {
         guard let table = scroll.documentView as? NSTableView, table.identifier?.rawValue == "calendarTimeline" else { return nil }
         // 目标正文可能高于动画起点窗口；端点取逻辑视口，不能被旧窗口裁掉末周。
         let logicalViewport = CGRect(origin: scroll.contentView.bounds.origin, size: scroll.bounds.size)
         let viewport = table.convert(logicalViewport, from: scroll.contentView)
         let rows = table.rows(in: viewport)
         var elements: [CalendarModeElement] = []
+        var rowImages: [(NSImage, CGRect)] = []
         for row in rows.location..<NSMaxRange(rows) {
             let intersection = table.rect(ofRow: row).intersection(viewport)
             guard !intersection.isNull, intersection.height > 0.01 else { continue }
@@ -195,6 +278,7 @@ private struct CalendarZoomSnapshot {
                     return bitmap
                 }()
                 guard let bitmap, let weekImage = bitmap.cgImage else { return nil }
+                rowImages.append((NSImage(cgImage: weekImage, size: area.size), area))
                 #if DEBUG
                 modeRowBitmapCount += 1
                 #endif
@@ -222,12 +306,39 @@ private struct CalendarZoomSnapshot {
             } else {
                 let area = root.backingAlignedRect(frame, options: .alignAllEdgesOutward)
                 guard let image = CalendarSnapshotImage.capture(view, in: view.convert(area, from: root)) else { return nil }
+                rowImages.append((image, area))
                 elements.append(CalendarModeElement(id: row * 8 + 7, frame: frame,
                     image: CalendarModeImage(image: image,
                         offset: CGPoint(x: area.minX - frame.minX, y: area.minY - frame.minY))))
             }
         }
-        return elements.isEmpty ? nil : elements
+        guard !elements.isEmpty else { return nil }
+        let card = root.convert(scroll.bounds, from: scroll)
+        let scale = root.window?.backingScaleFactor ?? 2
+        let dark = root.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        // 冻结画面复用完整周行位图，再合成标记；无需重绘原生视图或逐格拼接。
+        let composed = NSImage(size: card.size, flipped: true) { _ in
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            context.saveGState()
+            defer { context.restoreGState() }
+            context.translateBy(x: -card.minX, y: -card.minY)
+            for (image, frame) in rowImages {
+                image.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1,
+                           respectFlipped: true, hints: nil)
+            }
+            for element in elements where !element.markers.isEmpty {
+                context.saveGState()
+                context.clip(to: element.frame)
+                context.translateBy(x: element.frame.minX, y: element.frame.minY)
+                for marker in element.markers {
+                    CalendarEventDrawing.draw(marker: marker, style: marker.style, dark: dark)
+                }
+                context.restoreGState()
+            }
+            return true
+        }
+        guard let content = CalendarSnapshotImage.rasterized(composed, scale: scale) else { return nil }
+        return (elements, content)
     }
 
     @MainActor static func eventMarkerTargets(_ root: NSView) -> [Int: [CalendarEventMarker]] {
@@ -325,6 +436,7 @@ final class CalendarPresentationController: NSViewController {
     var eventMarkerSample: [String: [String: Double]]? { overlay?.markerSample }
     var eventCaptureCounters: [String: Double] {
         ["snapshots": Double(CalendarZoomSnapshot.modeCaptureCount),
+         "fullBitmaps": Double(CalendarSnapshotImage.timelineBitmapCount),
          "rows": Double(CalendarZoomSnapshot.modeRowBitmapCount),
          "pdfs": Double(CalendarZoomSnapshot.modePDFCount),
          "milliseconds": CalendarZoomSnapshot.modeCaptureMilliseconds]

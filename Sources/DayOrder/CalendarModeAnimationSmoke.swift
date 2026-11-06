@@ -94,6 +94,31 @@ import Foundation
             try await wait { !events.loading && !presentation.isTransitioning }
             let selection = model.selection
             let monthDate = model.month
+            presentation.reduceMotionOverride = true
+            var staticPixels: [[String: Any]] = []
+            for mode in [CalendarEventDisplay.detailed, .compact, .dots, .hidden] {
+                let area = presentation.view.convert(presentation.shell!.content.bounds, from: presentation.shell!.content)
+                    .insetBy(dx: 12, dy: 1)
+                let live = try bitmap(presentation.view, area)
+                let control = try button()
+                try require(control.sendAction(control.action, to: control.target), "日程按钮未启动静态端点检查")
+                let frozenError = try difference(live, bitmap(presentation.view, area))
+                try require(frozenError < 0.1, "切档冻结画面与原日期区不一致：月份=\(month)，模式=\(mode)，误差=\(frozenError)")
+                try await prepared()
+                presentation.sampleGeometry(deltaTime: 1)
+                draw()
+                let targetArea = presentation.movingCardFrame!.insetBy(dx: 12, dy: 1)
+                let target = try bitmap(presentation.view, targetArea)
+                try save(presentation.view, "mode-static-\(month)-\(mode.rawValue)")
+                finish()
+                presentation.view.layoutSubtreeIfNeeded()
+                let targetError = try difference(target, bitmap(presentation.view, targetArea))
+                try require(targetError < 0.1, "减少动态效果的端点交接发生像素跳变：月份=\(month)，模式=\(mode)，误差=\(targetError)")
+                staticPixels.append(["mode": mode.rawValue, "frozenPixelError": frozenError, "targetPixelError": targetError])
+            }
+            try JSONSerialization.data(withJSONObject: staticPixels, options: [.prettyPrinted, .sortedKeys])
+                .write(to: directory.appendingPathComponent("mode-static-pixels-\(month).json"))
+            presentation.reduceMotionOverride = false
             for mode in [CalendarEventDisplay.detailed, .compact, .dots, .hidden] {
                 let top = panel.frame.maxY
                 let shell = presentation.shell!

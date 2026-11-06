@@ -183,28 +183,66 @@ struct CalendarEventMarker {
         let badge = CGRect(x: rect.minX + 1, y: rect.midY - diameter / 2, width: diameter, height: diameter)
         tint.setFill()
         NSBezierPath(ovalIn: badge).fill()
-        NSImage(systemSymbolName: "calendar", accessibilityDescription: nil)?
+        let scale = max(2, hypot(cg.ctm.a, cg.ctm.b), hypot(cg.ctm.c, cg.ctm.d))
+        let iconRect = badge.insetBy(dx: 1.5, dy: 1.5)
+        if let symbol = NSImage(systemSymbolName: "calendar", accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 6, weight: .medium))?
-            .withSymbolConfiguration(.init(paletteColors: [.white]))?
-            .draw(in: badge.insetBy(dx: 1.5, dy: 1.5), from: .zero, operation: .sourceOver,
-                  fraction: 1, respectFlipped: true, hints: nil)
+            .withSymbolConfiguration(.init(paletteColors: [.white])),
+           let icon = rasterizedDetail(size: iconRect.size, scale: scale, drawing: { _ in
+               symbol.draw(in: CGRect(origin: .zero, size: iconRect.size), from: .zero, operation: .sourceOver,
+                           fraction: 1, respectFlipped: true, hints: nil)
+           }) {
+            // 系统符号的镂空在 PDF 回放中会丢失；只嵌入已合成的透明位图。
+            icon.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1,
+                      respectFlipped: true, hints: nil)
+        }
         let textRect = CGRect(x: rect.minX + 12, y: rect.minY, width: max(0, rect.width - 14), height: rect.height)
         cg.saveGState()
+        defer { cg.restoreGState() }
         cg.clip(to: textRect)
-        cg.beginTransparencyLayer(auxiliaryInfo: nil)
         let foreground = tint.blended(withFraction: dark ? 0.55 : 0.40, of: dark ? .white : .black) ?? .labelColor
         let text = NSAttributedString(string: marker.title, attributes: [
             .font: NSFont.systemFont(ofSize: 10, weight: .medium), .foregroundColor: foreground
         ])
-        text.draw(at: CGPoint(x: textRect.minX, y: textRect.midY - text.size().height / 2))
         if text.size().width > textRect.width,
-           let fade = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                                 colors: [NSColor.black.cgColor, NSColor.clear.cgColor] as CFArray, locations: [0, 1]) {
-            cg.setBlendMode(.destinationIn)
-            cg.drawLinearGradient(fade, start: CGPoint(x: textRect.maxX - 5, y: 0),
-                                  end: CGPoint(x: textRect.maxX, y: 0), options: [.drawsBeforeStartLocation])
+           let image = fadedTitle(text, size: textRect.size, scale: scale) {
+            image.draw(in: textRect, from: .zero, operation: .sourceOver, fraction: 1,
+                       respectFlipped: true, hints: nil)
+        } else {
+            text.draw(at: CGPoint(x: textRect.minX, y: textRect.midY - text.size().height / 2))
         }
-        cg.endTransparencyLayer()
-        cg.restoreGState()
+    }
+
+    private static func fadedTitle(_ text: NSAttributedString, size: CGSize, scale: CGFloat) -> NSImage? {
+        guard let fade = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: [NSColor.black.cgColor, NSColor.clear.cgColor] as CFArray, locations: [0, 1]) else { return nil }
+        return rasterizedDetail(size: size, scale: scale) { cg in
+            text.draw(at: CGPoint(x: 0, y: (size.height - text.size().height) / 2))
+            // PDF 快照无法保留 destinationIn 遮罩；先在透明位图内完成渐隐，再交给画布合成。
+            cg.setBlendMode(.destinationIn)
+            cg.drawLinearGradient(fade, start: CGPoint(x: size.width - 5, y: 0),
+                                  end: CGPoint(x: size.width, y: 0), options: [.drawsBeforeStartLocation])
+        }
+    }
+
+    private static func rasterizedDetail(size: CGSize, scale: CGFloat, drawing: (CGContext) -> Void) -> NSImage? {
+        guard size.width > 0, size.height > 0,
+              let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
+                pixelsWide: Int(ceil(size.width * scale)), pixelsHigh: Int(ceil(size.height * scale)),
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
+        let previous = NSGraphicsContext.current
+        defer { NSGraphicsContext.current = previous }
+        let cg = context.cgContext
+        cg.clear(CGRect(x: 0, y: 0, width: bitmap.pixelsWide, height: bitmap.pixelsHigh))
+        cg.translateBy(x: 0, y: CGFloat(bitmap.pixelsHigh))
+        cg.scaleBy(x: CGFloat(bitmap.pixelsWide) / size.width, y: -CGFloat(bitmap.pixelsHigh) / size.height)
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: cg, flipped: true)
+        drawing(cg)
+        bitmap.size = size
+        let image = NSImage(size: size)
+        image.addRepresentation(bitmap)
+        return image
     }
 }
