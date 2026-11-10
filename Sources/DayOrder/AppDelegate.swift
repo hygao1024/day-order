@@ -267,6 +267,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.terminate(nil)
                 return
             }
+            if ProcessInfo.processInfo.arguments.contains("--calendar-agenda-wheel-smoke") {
+                guard let source = smokeCalendarSource, let presentation = presentationController else { throw CocoaError(.coderInvalidValue) }
+                defaults.set(1, forKey: "firstWeekday")
+                try await CalendarAgendaWheelSmoke.verify(model: model, presentation: presentation,
+                    source: source, directory: directory)
+                try "日程展开滚轮路由检查通过。\n".write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.arguments.contains("--calendar-agenda-smoke") {
                 guard let source = smokeCalendarSource, let presentation = presentationController else { throw CocoaError(.coderInvalidValue) }
                 defaults.set(1, forKey: "firstWeekday")

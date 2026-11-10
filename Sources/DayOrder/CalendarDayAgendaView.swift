@@ -36,12 +36,22 @@ struct CalendarAgendaSelection: Equatable {
     }
 }
 
-// 内层列表独立消费滚轮，包括到达边缘时；不能把剩余滚动传给月份时间线。
+// 有溢出时内层列表独立消费滚轮，包括到达边缘时；内容全部可见则交给外层日历。
 final class CalendarAgendaScrollView: NSScrollView {
+    #if DEBUG
+    var wheelEvents = 0
+    #endif
     override func scrollWheel(with event: NSEvent) {
+        #if DEBUG
+        wheelEvents += 1
+        #endif
         guard let documentView else { return }
-        let delta = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.scrollingDeltaY * 12
         let limit = max(0, documentView.bounds.height - contentView.bounds.height)
+        guard limit > 0.5 else {
+            nextResponder?.scrollWheel(with: event)
+            return
+        }
+        let delta = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.scrollingDeltaY * 12
         contentView.scroll(to: NSPoint(x: 0, y: min(limit, max(0, contentView.bounds.minY - delta))))
         reflectScrolledClipView(contentView)
     }
