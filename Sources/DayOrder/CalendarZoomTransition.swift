@@ -421,6 +421,7 @@ final class CalendarPresentationController: NSViewController {
     var reduceMotionOverride: Bool?
     var controlsAnimationClock = false
     var hasActiveFrameDriver: Bool { displayLink != nil }
+    var activeFrameRateRange: CAFrameRateRange? { displayLink?.preferredFrameRateRange }
     private(set) var driverCallbackCount = 0
     private(set) var displayTimestamps: [Double] = []
     private(set) var preparationMilliseconds = 0.0
@@ -731,6 +732,8 @@ final class CalendarPresentationController: NSViewController {
                     advance(link)
                 }
                 let link = view.displayLink(target: target, selector: #selector(CalendarDisplayLinkTarget.tick(_:)))
+                CalendarRefreshPolicy.apply(to: link, in: view,
+                    enabled: defaults.bool(forKey: CalendarRefreshPolicy.preferenceKey))
                 displayLink = link
                 link.add(to: .main, forMode: .common)
             }
@@ -740,6 +743,8 @@ final class CalendarPresentationController: NSViewController {
     private func advance(_ link: CADisplayLink) {
         guard displayLink === link else { return }
         guard view.window?.isVisible == true else { finishTransition(); return }
+        CalendarRefreshPolicy.apply(to: link, in: view,
+            enabled: defaults.bool(forKey: CalendarRefreshPolicy.preferenceKey))
         #if DEBUG
         let frameStarted = ProcessInfo.processInfo.systemUptime
         displayTimestamps.append(link.targetTimestamp)
@@ -773,13 +778,6 @@ final class CalendarPresentationController: NSViewController {
         targetSize = host.view.fittingSize
         preferredContentSize = targetSize
     }
-}
-
-@MainActor
-private final class CalendarDisplayLinkTarget: NSObject {
-    let frame: (CADisplayLink) -> Void
-    init(frame: @escaping (CADisplayLink) -> Void) { self.frame = frame }
-    @objc func tick(_ link: CADisplayLink) { frame(link) }
 }
 
 private final class CalendarPresentationView: NSView {

@@ -196,6 +196,14 @@ python3 scripts/run-smoke.py "$PWD/build/holiday-network-smoke" --holiday-networ
 
 该检查依赖网络及上游服务，会额外生成 `holiday-network-result.txt`。普通冒烟验证和单元测试不需要联网。
 
+## 高刷新率偏好
+
+```sh
+python3 scripts/run-smoke.py "$PWD/build/high-refresh-smoke" --refresh-rate-smoke
+```
+
+该专项验证开关两种状态下，真实滚动及页面过渡驱动的帧率请求与所在屏幕能力匹配；覆盖动画中偏好切换、导航完成、新手势取消、关闭后停止回调。生成 `refresh-rate.json`、`result.txt` 与日志；记录的目标时间戳不代表实际物理呈现帧率。系统开启“减少动态效果”时，本专项明确报出前置条件不满足，不修改系统偏好。设置专项另通过真实“优先高刷新率”控件检查开关写入；月初吸附和返回今天专项覆盖显示同步驱动迁移后的原有行为。
+
 ## 滚动性能
 
 年概览使用原生按钮直接绘制小月历，复用可见行，并缓存公历排布和文字尺寸。比较滚动处理开销时，使用相同构建配置运行：

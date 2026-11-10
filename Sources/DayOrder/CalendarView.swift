@@ -16,6 +16,7 @@ struct CalendarView: View {
     @AppStorage("firstWeekday") private var firstWeekday = 2
     @AppStorage("appearance") private var appearance = "system"
     @AppStorage("blurEnabled") private var blurEnabled = true
+    @AppStorage(CalendarRefreshPolicy.preferenceKey) private var preferHighRefreshRate = false
     @AppStorage("menuBarDisplay") private var menuBarDisplay = MenuBarDisplay.iconAndDate.rawValue
     @AppStorage("menuBarDateFormat") private var menuBarDateFormat = MenuBarDateFormat.monthDayWeekday.rawValue
     let updateMenuBar: () -> Void
@@ -62,7 +63,8 @@ struct CalendarView: View {
                 else if model.showingYearOverview {
                     YearCalendarScrollView(model: model, firstWeekday: effectiveWeekday)
                 } else {
-                    CalendarTimelineView(model: model, events: events, firstWeekday: effectiveWeekday, options: contentOptions)
+                    CalendarTimelineView(model: model, events: events, firstWeekday: effectiveWeekday,
+                                         options: contentOptions, preferHighRefreshRate: preferHighRefreshRate)
                 }
             }),
             footer: AnyView(Group {
@@ -200,6 +202,7 @@ struct CalendarView: View {
         CalendarSettingsView(model: model, launchAtLogin: launchAtLogin, appUpdater: appUpdater,
                              menuBarDisplay: $menuBarDisplay, menuBarDateFormat: $menuBarDateFormat,
                              appearance: $appearance, blurEnabled: $blurEnabled, firstWeekday: $firstWeekday,
+                             preferHighRefreshRate: $preferHighRefreshRate,
                              showTraditional: $showTraditional, showCivil: $showCivil,
                              showWestern: $showWestern, showWorldDays: $showWorldDays,
                              showSolarTerms: $showSolarTerms, showHolidaySchedule: $showHolidaySchedule)

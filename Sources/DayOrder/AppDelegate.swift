@@ -246,6 +246,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // showPanel 会刷新真实日期；快照随后固定时钟，使用同一生产视图。
             model.today = model.engine.date(2026, 10, 23)
             model.select(model.today)
+            if ProcessInfo.processInfo.arguments.contains("--refresh-rate-smoke") {
+                guard let presentation = presentationController, let root = hostingController?.view else {
+                    throw CocoaError(.coderInvalidValue)
+                }
+                try await CalendarRefreshSmoke.verify(model: model, defaults: defaults, root: root,
+                    presentation: presentation, directory: directory,
+                    close: { self.panel.close() }, reopen: { self.showPanel() })
+                NSApp.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.arguments.contains("--calendar-mode-latency-smoke") {
                 guard let source = smokeCalendarSource, let presentation = presentationController else {
                     throw CocoaError(.coderInvalidValue)
@@ -2078,7 +2088,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let behavior = panel.behavior
         panel.behavior = .applicationDefined
-        let keys = ["appearance", "blurEnabled", "menuBarDisplay", "menuBarDateFormat", "firstWeekday", "showSolarTerms"]
+        let keys = ["appearance", "blurEnabled", "menuBarDisplay", "menuBarDateFormat", "firstWeekday", "showSolarTerms",
+                    CalendarRefreshPolicy.preferenceKey]
         let saved = keys.map { ($0, defaults.object(forKey: $0)) }
         defer {
             panel.behavior = behavior
@@ -2215,6 +2226,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !defaults.bool(forKey: "showSolarTerms") else { throw CocoaError(.coderInvalidValue) }
         try await press("二十四节气")
         guard defaults.bool(forKey: "showSolarTerms") else { throw CocoaError(.coderInvalidValue) }
+        defaults.set(false, forKey: CalendarRefreshPolicy.preferenceKey)
+        try await Task.sleep(for: .milliseconds(100))
+        try await press("优先高刷新率")
+        guard defaults.bool(forKey: CalendarRefreshPolicy.preferenceKey) else { throw CocoaError(.coderInvalidValue) }
+        try await press("优先高刷新率")
+        guard !defaults.bool(forKey: CalendarRefreshPolicy.preferenceKey) else { throw CocoaError(.coderInvalidValue) }
         defaults.set(MenuBarDisplay.iconAndDate.rawValue, forKey: "menuBarDisplay")
         defaults.set(MenuBarDateFormat.yearMonthDayWeekday.rawValue, forKey: "menuBarDateFormat")
         try await saveSnapshot("settings-long-date-format", to: directory)

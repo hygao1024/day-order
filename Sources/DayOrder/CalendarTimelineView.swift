@@ -1,5 +1,6 @@
 import AppKit
 import DayOrderCore
+import QuartzCore
 import SwiftUI
 
 struct CalendarContentOptions: Equatable {
@@ -33,6 +34,7 @@ struct CalendarTimelineView: NSViewRepresentable {
     @ObservedObject var events: SystemCalendarEvents
     let firstWeekday: Int
     let options: CalendarContentOptions
+    let preferHighRefreshRate: Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator(model: model, firstWeekday: firstWeekday, options: options)
@@ -75,10 +77,13 @@ struct CalendarTimelineView: NSViewRepresentable {
         scroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.scrolled),
             name: NSView.boundsDidChangeNotification, object: scroll.contentView)
+        NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.windowOcclusionChanged),
+            name: NSWindow.didChangeOcclusionStateNotification, object: nil)
         return scroll
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
+        context.coordinator.preferHighRefreshRate = preferHighRefreshRate
         context.coordinator.update(firstWeekday: firstWeekday, options: options)
     }
 
@@ -110,6 +115,14 @@ struct CalendarTimelineView: NSViewRepresentable {
         private var animatingSnap = false
         private var navigating = false
         private var liveScrolling = false
+        var preferHighRefreshRate = false
+        private var snapDisplayLink: CADisplayLink?
+        private var snapContinuation: CheckedContinuation<Void, Never>?
+        #if DEBUG
+        var hasActiveSnapDriver: Bool { snapDisplayLink != nil }
+        var snapFrameRateRange: CAFrameRateRange? { snapDisplayLink?.preferredFrameRateRange }
+        private(set) var snapFrameTimestamps: [Double] = []
+        #endif
 
         init(model: CalendarModel, firstWeekday: Int, options: CalendarContentOptions) {
             self.model = model
@@ -234,6 +247,7 @@ struct CalendarTimelineView: NSViewRepresentable {
             snapSerial += 1
             snapTask?.cancel()
             snapTask = nil
+            stopSnapFrames()
             animatingSnap = false
             navigating = false
         }
@@ -263,6 +277,21 @@ struct CalendarTimelineView: NSViewRepresentable {
         @objc func liveScrollEnded() {
             liveScrolling = false
             scheduleSnap()
+        }
+
+        @objc func windowOcclusionChanged(_ notification: Notification) {
+            guard let window = notification.object as? NSWindow, window === table?.window,
+                  !window.occlusionState.contains(.visible) else { return }
+            // 不可见视图可能不再收到刷新回调，不能依赖下一帧释放等待任务。
+            cancelSnap()
+        }
+
+        private func stopSnapFrames() {
+            snapDisplayLink?.invalidate()
+            snapDisplayLink = nil
+            let continuation = snapContinuation
+            snapContinuation = nil
+            continuation?.resume()
         }
 
         func scheduleSnap() {
@@ -296,20 +325,50 @@ struct CalendarTimelineView: NSViewRepresentable {
             let first = candidate.weeks.lowerBound
             let offset = table.visibleRect.minY - table.rect(ofRow: first).minY
             let duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : duration
-            let start = ProcessInfo.processInfo.systemUptime
-            while true {
-                guard !Task.isCancelled, snapSerial == serial,
-                      requestedRevision == model.calendarScrollRevision,
-                      startingSelection == nil || model.selection == startingSelection,
-                      !model.showingSettings, !model.showingYearOverview,
-                      table.window?.isVisible == true else { return }
-                let progress = duration == 0 ? 1 : min(1, (ProcessInfo.processInfo.systemUptime - start) / duration)
-                let remaining = easeOut ? pow(1 - progress, 3) : 1 - progress * progress * (3 - 2 * progress)
-                moveViewport(to: table.rect(ofRow: first).minY + offset * remaining)
-                if selectionOnArrival != nil { recordViewport() }
-                if progress == 1 { break }
-                do { try await Task.sleep(for: .milliseconds(8)) } catch { return }
+            let start = CACurrentMediaTime()
+            func canContinue() -> Bool {
+                snapSerial == serial && requestedRevision == model.calendarScrollRevision
+                    && (startingSelection == nil || model.selection == startingSelection)
+                    && !model.showingSettings && !model.showingYearOverview
+                    && table.window?.isVisible == true
             }
+            guard !Task.isCancelled, canContinue() else { return }
+            #if DEBUG
+            snapFrameTimestamps = []
+            #endif
+            if duration == 0 {
+                moveViewport(to: table.rect(ofRow: first).minY)
+            } else {
+                await withTaskCancellationHandler {
+                    await withCheckedContinuation { continuation in
+                        guard !Task.isCancelled, canContinue() else { continuation.resume(); return }
+                        snapContinuation = continuation
+                        let target = CalendarDisplayLinkTarget { [weak self] link in
+                            guard let self, snapDisplayLink === link else { link.invalidate(); return }
+                            guard canContinue() else { stopSnapFrames(); return }
+                            CalendarRefreshPolicy.apply(to: link, in: table, enabled: preferHighRefreshRate)
+                            #if DEBUG
+                            snapFrameTimestamps.append(link.targetTimestamp)
+                            #endif
+                            let progress = min(1, max(0, (link.targetTimestamp - start) / duration))
+                            let remaining = easeOut ? pow(1 - progress, 3) : 1 - progress * progress * (3 - 2 * progress)
+                            moveViewport(to: table.rect(ofRow: first).minY + offset * remaining)
+                            if selectionOnArrival != nil { recordViewport() }
+                            if progress == 1 { stopSnapFrames() }
+                        }
+                        let link = table.displayLink(target: target, selector: #selector(CalendarDisplayLinkTarget.tick(_:)))
+                        CalendarRefreshPolicy.apply(to: link, in: table, enabled: preferHighRefreshRate)
+                        snapDisplayLink = link
+                        link.add(to: .main, forMode: .common)
+                    }
+                } onCancel: {
+                    Task { @MainActor [weak self] in
+                        guard let self, snapSerial == serial else { return }
+                        stopSnapFrames()
+                    }
+                }
+            }
+            guard !Task.isCancelled, canContinue() else { return }
             model.calendarSnappedMonth = candidate.month
             model.calendarViewport = (timeline.rows[first].date, candidate.month, 0)
             model.browseMonth(containing: candidate.month)

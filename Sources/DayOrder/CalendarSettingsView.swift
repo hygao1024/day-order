@@ -11,6 +11,7 @@ struct CalendarSettingsView: View {
     @Binding var appearance: String
     @Binding var blurEnabled: Bool
     @Binding var firstWeekday: Int
+    @Binding var preferHighRefreshRate: Bool
     @Binding var showTraditional: Bool
     @Binding var showCivil: Bool
     @Binding var showWestern: Bool
@@ -109,6 +110,8 @@ struct CalendarSettingsView: View {
             separator
             toggle("毛玻璃效果", isOn: $blurEnabled)
                 .help("开启后模糊弹窗外围背景；关闭后使用实色背景")
+            separator
+            toggle("优先高刷新率", isOn: $preferHighRefreshRate)
         }
     }
 
