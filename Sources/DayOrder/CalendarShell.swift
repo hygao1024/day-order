@@ -7,12 +7,14 @@ struct CalendarShell: NSViewRepresentable {
     let footer: AnyView
     let yearOverview: Bool
     let showingSettings: Bool
+    let blurEnabled: Bool
     let calendarHeight: CGFloat
 
     func makeNSView(context: Context) -> CalendarShellView { CalendarShellView() }
 
     func updateNSView(_ view: CalendarShellView, context: Context) {
         view.setPage(yearOverview: yearOverview, showingSettings: showingSettings)
+        view.cardBackground.rootView = CalendarCardBackground(usesMaterial: blurEnabled)
         view.calendarHeight = calendarHeight
         view.header.rootView = AnyView(header.frame(width: 320).fixedSize(horizontal: false, vertical: true))
         view.content.rootView = content
@@ -31,6 +33,7 @@ final class CalendarShellView: NSView {
     let header = NSHostingView(rootView: AnyView(EmptyView()))
     let content = NSHostingView(rootView: AnyView(EmptyView()))
     let footer = NSHostingView(rootView: AnyView(EmptyView()))
+    let cardBackground = CalendarCardBackgroundHost(rootView: CalendarCardBackground(usesMaterial: true))
     private let headerClip = CalendarShellClipView()
     private let footerClip = CalendarShellClipView()
     private var yearOverview = false
@@ -68,6 +71,7 @@ final class CalendarShellView: NSView {
         oldHeader.alphaValue = 0
         oldFooter.alphaValue = 0
         addSubview(headerClip)
+        addSubview(cardBackground)
         addSubview(content)
         addSubview(footerClip)
         content.wantsLayer = true
@@ -150,16 +154,12 @@ final class CalendarShellView: NSView {
     }
 
     private func positionChrome(card: NSRect, height: CGFloat) {
+        // 材质不进入正文快照，切换期间继续使用同一背景并跟随卡片边界。
+        cardBackground.frame = card.insetBy(dx: -CalendarCardBackground.drawingInset,
+                                            dy: -CalendarCardBackground.drawingInset)
         headerClip.frame = NSRect(x: 0, y: 0, width: 320, height: card.minY)
         footerClip.frame = NSRect(x: 0, y: card.maxY, width: 320,
                                   height: max(0, height - card.maxY))
-    }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            content.layer?.backgroundColor = CalendarSurface.contentColor.cgColor
-        }
     }
 
     func endTransition() {

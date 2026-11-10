@@ -76,7 +76,7 @@ private final class MiniMonthButton: NSButton, CalendarZoomParticipant {
     private static let days = (1...31).map { CalendarGlyph(String($0), size: 9, color: .labelColor, monospaced: true) }
     private static let todayDays = (1...31).map { CalendarGlyph(String($0), size: 9, color: .white, monospaced: true) }
     private static let weekdays = ["日", "一", "二", "三", "四", "五", "六"].map {
-        CalendarGlyph($0, size: 8, color: .secondaryLabelColor)
+        CalendarGlyph($0, size: 8, color: CalendarSurface.secondaryTextColor)
     }
     private static let months = (1...12).map {
         CalendarGlyph("\($0)月", size: 14, weight: .semibold, color: .labelColor)
@@ -123,6 +123,7 @@ private final class MiniMonthButton: NSButton, CalendarZoomParticipant {
             drawCaption(month)
             return
         }
+        clipBelowYearHeaders()
         if hovered || isHighlighted {
             (isHighlighted ? NSColor.labelColor.withAlphaComponent(0.08) : Self.hoverColor).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: YearCalendarLayout.monthCornerRadius,
@@ -220,6 +221,8 @@ private final class MiniMonthButton: NSButton, CalendarZoomParticipant {
 
     // 滚动和行复用可能使进入/离开事件过期，以当前窗口命中结果为准。
     @objc private func refreshHover() {
+        // 悬浮年份行复用卡片背景，滚动后重新裁掉其下方的月份内容。
+        needsDisplay = true
         var inside = false
         if let window, window.isKeyWindow, let content = window.contentView {
             let point = content.superview?.convert(window.mouseLocationOutsideOfEventStream, from: nil)
@@ -228,7 +231,6 @@ private final class MiniMonthButton: NSButton, CalendarZoomParticipant {
         }
         if hovered != inside {
             hovered = inside
-            needsDisplay = true
         }
     }
 
@@ -237,9 +239,29 @@ private final class MiniMonthButton: NSButton, CalendarZoomParticipant {
     override func viewDidChangeEffectiveAppearance() { needsDisplay = true }
     override var focusRingMaskBounds: NSRect { bounds }
     override func drawFocusRingMask() {
+        clipBelowYearHeaders()
         NSBezierPath(roundedRect: bounds, xRadius: YearCalendarLayout.monthCornerRadius,
                      yRadius: YearCalendarLayout.monthCornerRadius).fill()
     }
+
+    private func clipBelowYearHeaders() {
+        guard let table = enclosingScrollView?.documentView as? NSTableView else { return }
+        let path = NSBezierPath(rect: bounds)
+        path.windingRule = .evenOdd
+        table.enumerateAvailableRowViews { row, _ in
+            guard let header = row.view(atColumn: 0) as? YearHeaderView else { return }
+            let covered = self.convert(header.bounds, from: header).intersection(self.bounds)
+            if !covered.isNull && !covered.isEmpty { path.appendRect(covered) }
+        }
+        path.addClip()
+    }
+}
+
+// AppKit 的悬浮分组行默认另画底色，必须与年份内容一起透明，才能共用卡片材质。
+final class YearHeaderRowView: NSTableRowView {
+    override var isOpaque: Bool { false }
+    override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
+    override func drawBackground(in dirtyRect: NSRect) {}
 }
 
 final class YearHeaderView: NSView {
@@ -247,7 +269,6 @@ final class YearHeaderView: NSView {
     private let edit = NSButton()
     private var onEdit: (() -> Void)?
     override var isFlipped: Bool { true }
-    override var isOpaque: Bool { true }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -285,8 +306,6 @@ final class YearHeaderView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        CalendarSurface.contentColor.setFill()
-        bounds.fill()
         NSColor.separatorColor.withAlphaComponent(0.25).setFill()
         let inset = YearCalendarLayout.contentInset
         NSRect(x: inset, y: 0, width: max(0, bounds.width - 2 * inset), height: 0.5).fill()

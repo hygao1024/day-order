@@ -111,20 +111,23 @@ struct CalendarEventMarker {
     var style: CalendarEventMarkerStyle
     let color: CalendarEvent.Color
     let title: String
+    var isMuted = false
     var continuesBefore = false
     var continuesAfter = false
 }
 
 @MainActor enum CalendarEventDrawing {
+    private static let adjacentOpacity: CGFloat = 0.25
+
     static func markers(events: [CalendarEvent], mode: CalendarEventDisplay, width: CGFloat,
                         muted: Bool, dark: Bool, segments: [CalendarEventWeekLayout.Segment],
                         column: Int, overflow: Int) -> [CalendarEventMarker] {
         func marker(_ event: CalendarEvent, rect: CGRect, title: String) -> CalendarEventMarker {
             CalendarEventMarker(id: event.occurrenceID,
-                style: CalendarEventMarkerStyle(frame: rect, opacity: muted ? 0.25 : 1,
+                style: CalendarEventMarkerStyle(frame: rect, opacity: muted ? adjacentOpacity : 1,
                     fillOpacity: mode == .detailed ? (dark ? 0.28 : 0.16) : 0.85,
                     detailOpacity: mode == .detailed ? 1 : 0, collapseX: width / 2),
-                color: event.color, title: title)
+                color: event.color, title: title, isMuted: muted)
         }
         if mode == .hidden { return [] }
         if mode == .dots {
@@ -200,7 +203,10 @@ struct CalendarEventMarker {
         cg.saveGState()
         defer { cg.restoreGState() }
         cg.clip(to: textRect)
-        let foreground = tint.blended(withFraction: dark ? 0.55 : 0.40, of: dark ? .white : .black) ?? .labelColor
+        // 邻月深色标签只减少文字淡化，底色和图标保留原层级，并继续跟随动画透明度。
+        let textOpacity = dark && marker.isMuted ? min(1, opacity / adjacentOpacity * 0.90) : opacity
+        cg.setAlpha(textOpacity * details)
+        let foreground = tint.blended(withFraction: dark ? 0.75 : 0.40, of: dark ? .white : .black) ?? .labelColor
         let text = NSAttributedString(string: marker.title, attributes: [
             .font: NSFont.systemFont(ofSize: 10, weight: .medium), .foregroundColor: foreground
         ])

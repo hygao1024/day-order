@@ -1390,8 +1390,6 @@ private final class CalendarZoomOverlay: NSView {
         defer { NSGraphicsContext.restoreGraphicsState() }
         let path = NSBezierPath(roundedRect: cardFrame, xRadius: 12, yRadius: 12)
         path.addClip()
-        CalendarSurface.contentColor.setFill()
-        path.fill()
         if let modeGrid {
             modeGrid.draw(fraction: contentFraction,
                           dark: effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)

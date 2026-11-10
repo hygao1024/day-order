@@ -69,11 +69,12 @@ struct CalendarView: View {
                 if model.showingSettings { settings.footer }
                 else if model.showingYearOverview {
                     Text("点击月份查看 · 滚动浏览年份")
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                        .font(.system(size: 10)).foregroundStyle(CalendarSurface.secondaryText)
                         .frame(maxWidth: .infinity).padding(.vertical, 7)
                 } else { detail.padding(12) }
             }),
             yearOverview: model.showingYearOverview, showingSettings: model.showingSettings,
+            blurEnabled: blurEnabled,
             calendarHeight: events.mode.viewportHeight)
     }
 
@@ -97,7 +98,7 @@ struct CalendarView: View {
                 ForEach(0..<7) { index in
                     Text(weekdays[(effectiveWeekday - 1 + index) % 7])
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(CalendarSurface.secondaryText)
                         .frame(maxWidth: .infinity)
                 }
             }
@@ -152,7 +153,7 @@ struct CalendarView: View {
                     .font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Text("周" + weekdays[day.weekday - 1])
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .font(.system(size: 11)).foregroundStyle(CalendarSurface.secondaryText)
                 Button { model.showingSettings = true } label: {
                     Image(systemName: "gearshape").font(.system(size: 14)).frame(width: 24, height: 24)
                 }
@@ -163,16 +164,16 @@ struct CalendarView: View {
             }
             Text(([day.lunarFull] + annotations.map(\.title)).joined(separator: " · "))
                 .font(.system(size: 11.5))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(CalendarSurface.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
             if showHolidaySchedule {
                 if let holiday = model.holidays.day(day) {
                     Text(holiday.detail)
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .font(.system(size: 11)).foregroundStyle(CalendarSurface.secondaryText)
                 }
                 if let message = model.holidays.coverageMessage(for: day) {
-                    Text(message).font(.system(size: 10)).foregroundStyle(.secondary)
+                    Text(message).font(.system(size: 10)).foregroundStyle(CalendarSurface.secondaryText)
                 }
             }
             if !annotations.isEmpty {
@@ -181,7 +182,7 @@ struct CalendarView: View {
                         if let summary = annotation.summary {
                             (Text(annotation.title + " · ").fontWeight(.medium) + Text(summary))
                                 .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(CalendarSurface.secondaryText)
                                 .lineSpacing(2)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .textSelection(.enabled)

@@ -148,6 +148,15 @@ struct YearCalendarScrollView: NSViewRepresentable {
         func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool { row % 7 == 0 }
         func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
 
+        func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+            guard row % 7 == 0 else { return nil }
+            let identifier = NSUserInterfaceItemIdentifier("transparentYearRow")
+            let view = tableView.makeView(withIdentifier: identifier, owner: nil) as? YearHeaderRowView
+                ?? YearHeaderRowView()
+            view.identifier = identifier
+            return view
+        }
+
         func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
             let year = CalendarEngine.years.lowerBound + row / 7
             let index = row % 7

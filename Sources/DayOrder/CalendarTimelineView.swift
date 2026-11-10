@@ -574,7 +574,7 @@ final class CalendarDayButton: NSButton, CalendarZoomParticipant {
     override func draw(_ dirtyRect: NSRect) {
         guard let day, isEnabled else { return }
         let highlightedToday = today && isInMonth
-        let muted = NSColor.labelColor.withAlphaComponent(0.18)
+        let muted = CalendarSurface.adjacentTextColor
         if (selected && !highlightedToday) || isHighlighted {
             NSColor.labelColor.withAlphaComponent(isHighlighted ? 0.09 : 0.06).setFill()
             feedbackPath.fill()
@@ -582,12 +582,11 @@ final class CalendarDayButton: NSButton, CalendarZoomParticipant {
         let circle = dayNumberFrame
         if !zoomHiddenDays.contains(day.day) {
             if highlightedToday { Self.accent.setFill(); NSBezierPath(ovalIn: circle).fill() }
-            let weekend = day.weekday == 1 || day.weekday == 7
             drawText(String(day.day), rect: circle, font: .monospacedDigitSystemFont(ofSize: 16, weight: .semibold),
-                     color: !isInMonth ? muted : today ? .white : weekend ? .secondaryLabelColor : .labelColor)
+                     color: !isInMonth ? muted : today ? .white : .labelColor)
         }
         let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        let color: NSColor = !isInMonth ? muted : annotation == nil ? .secondaryLabelColor : annotation?.kind == .solarTerm
+        let color: NSColor = !isInMonth ? muted : annotation == nil ? CalendarSurface.secondaryTextColor : annotation?.kind == .solarTerm
             ? (dark ? NSColor(srgbRed: 0.48, green: 0.74, blue: 0.55, alpha: 1)
                     : NSColor(srgbRed: 0.17, green: 0.43, blue: 0.25, alpha: 1))
             : (dark ? NSColor(srgbRed: 1, green: 0.47, blue: 0.40, alpha: 1) : Self.accent)
@@ -597,7 +596,7 @@ final class CalendarDayButton: NSButton, CalendarZoomParticipant {
         if let holiday {
             drawText(holiday.badge, rect: NSRect(x: bounds.width - 9, y: 3, width: 9, height: 10),
                      font: .systemFont(ofSize: 8, weight: .medium),
-                     color: !isInMonth ? muted : holiday.isOffDay ? Self.accent : .secondaryLabelColor)
+                     color: !isInMonth ? muted : holiday.isOffDay ? Self.accent : CalendarSurface.secondaryTextColor)
         }
         if !snapshotHidesEventMarkers, eventMode != .hidden, !events.isEmpty {
             NSGraphicsContext.saveGraphicsState()
@@ -614,10 +613,9 @@ final class CalendarDayButton: NSButton, CalendarZoomParticipant {
         let circle = dayNumberFrame
         guard let scroll = enclosingScrollView,
               root.convert(scroll.bounds, from: scroll).intersects(root.convert(circle, from: self)) else { return [] }
-        let weekend = day.weekday == 1 || day.weekday == 7
         return [CalendarZoomAnchor(day: day.day, frame: root.convert(circle, from: self),
             fontSize: 16, weight: NSFont.Weight.semibold.rawValue,
-            color: today ? .white : weekend ? .secondaryLabelColor : .labelColor, circle: today)]
+            color: today ? .white : .labelColor, circle: today)]
     }
 
     private var dayNumberFrame: NSRect { NSRect(x: bounds.midX - 13, y: 3, width: 26, height: 26) }
