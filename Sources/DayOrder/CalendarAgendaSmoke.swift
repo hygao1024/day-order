@@ -133,7 +133,7 @@ import DayOrderCore
             try require(abs(before.minY - after.minY) < 0.5,
                         "展开移动了选中日期：\(before) → \(after)\n起点：\(beforeGeometry)\n终点：\(geometry(try day(13)))")
             try require(view.heading.stringValue.contains("12项日程"), "完整日程数量错误")
-            try require(view.scroll.documentView!.subviews.count == 12, "日程列表被截断")
+            try require(view.itemCount == 12 && view.scroll.documentView!.subviews.count < 12, "日程列表被截断")
             try require(view.scroll.contentSize.height <= CalendarDayAgendaLayout.bodyLimit + 1, "列表没有限制高度")
             try requireFixedWindow()
             try require(abs(table.rect(ofRow: selectedRow + 1).minY - table.rect(ofRow: selectedRow).minY

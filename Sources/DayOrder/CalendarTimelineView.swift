@@ -104,6 +104,8 @@ struct CalendarTimelineView: NSViewRepresentable {
         private var eventMode: CalendarEventDisplay
         private var agenda: CalendarAgendaSelection?
         private var agendaHeight: CGFloat = 0
+        private var agendaRow: Int?
+        private var agendaLayout: CalendarDayAgendaLayout?
         private var updating = false
         private var scrollTask: Task<Void, Never>?
         private var scrollSerial = 0
@@ -121,6 +123,8 @@ struct CalendarTimelineView: NSViewRepresentable {
         private var snapDisplayLink: CADisplayLink?
         private var snapContinuation: CheckedContinuation<Void, Never>?
         #if DEBUG
+        var heightQueries = 0
+        var weekConfigurations = 0
         var hasActiveSnapDriver: Bool { snapDisplayLink != nil }
         var snapFrameRateRange: CAFrameRateRange? { snapDisplayLink?.preferredFrameRateRange }
         private(set) var snapFrameTimestamps: [Double] = []
@@ -160,15 +164,18 @@ struct CalendarTimelineView: NSViewRepresentable {
             let rebuilt = firstWeekday != timeline.firstWeekday
             let resized = eventMode != model.events.mode
             let requestedNavigation = revision != model.calendarScrollRevision
-            let nextAgenda = model.agendaLayout == nil ? nil : model.agenda
-            let nextHeight = model.agendaLayout?.height ?? 0
+            let nextLayout = model.agendaLayout
+            let nextAgenda = nextLayout == nil ? nil : model.agenda
+            let nextHeight = nextLayout?.height ?? 0
+            let agendaContentChanged = agendaLayout !== nextLayout
+            agendaLayout = nextLayout
             let agendaChanged = agenda != nextAgenda || agendaHeight != nextHeight
-            let oldAgendaRow = agenda.map { timeline.weekRow(containing: $0.date, inMonth: $0.month) }
+            let oldAgendaRow = agendaRow
             if (resized || agendaChanged) && !requestedNavigation { recordViewport() }
             agenda = nextAgenda
             agendaHeight = nextHeight
             let changed = self.options != options || today != model.today || selection != model.selection
-                || holidayRevision != model.holidayRevision || eventRevision != model.events.revision || resized || agendaChanged || agenda != nil
+                || holidayRevision != model.holidayRevision || eventRevision != model.events.revision || resized || agendaChanged || agendaContentChanged
             self.options = options
             today = model.today
             selection = model.selection
@@ -178,14 +185,16 @@ struct CalendarTimelineView: NSViewRepresentable {
             if rebuilt {
                 cancelSnap()
                 timeline = model.calendarTimeline(firstWeekday: firstWeekday)
+                agendaRow = agenda.map { timeline.weekRow(containing: $0.date, inMonth: $0.month) }
                 days.removeAll()
                 table.reloadData()
             } else if resized || agendaChanged {
+                agendaRow = agenda.map { timeline.weekRow(containing: $0.date, inMonth: $0.month) }
                 // 原生表格先同步落到真实端点；可见运动只由展示层的弹簧拥有。
                 NSAnimationContext.runAnimationGroup { context in
                     context.duration = 0
                     context.allowsImplicitAnimation = false
-                    let newAgendaRow = agenda.map { timeline.weekRow(containing: $0.date, inMonth: $0.month) }
+                    let newAgendaRow = agendaRow
                     let changedRows = resized ? IndexSet(integersIn: 0..<timeline.rows.count)
                         : IndexSet([oldAgendaRow, newAgendaRow].compactMap { $0 })
                     table.noteHeightOfRows(withIndexesChanged: changedRows)
@@ -451,6 +460,9 @@ struct CalendarTimelineView: NSViewRepresentable {
 
         func numberOfRows(in tableView: NSTableView) -> Int { timeline.rows.count }
         func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+            #if DEBUG
+            heightQueries += 1
+            #endif
             switch timeline.rows[row] {
             case .month: return 30
             case .week(_, let month):
@@ -459,7 +471,7 @@ struct CalendarTimelineView: NSViewRepresentable {
                 let scale = tableView.window?.backingScaleFactor ?? 2
                 let unit = eventMode.viewportHeight * scale / CGFloat(weeks.count)
                 let index = CGFloat(row - weeks.lowerBound)
-                let extra = agenda.map { timeline.weekRow(containing: $0.date, inMonth: $0.month) == row ? agendaHeight : 0 } ?? 0
+                let extra = agendaRow == row ? agendaHeight : 0
                 return (floor((index + 1) * unit) - floor(index * unit)) / scale + extra
             }
         }
@@ -490,6 +502,9 @@ struct CalendarTimelineView: NSViewRepresentable {
         }
 
         private func configure(_ view: CalendarWeekView, row: Int) {
+            #if DEBUG
+            weekConfigurations += 1
+            #endif
             guard case .week(let start, let sectionMonth) = timeline.rows[row] else { return }
             let values: [DayInfo]
             if let cached = days[start] { values = cached }

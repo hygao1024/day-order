@@ -16,7 +16,7 @@ Status: implemented
 
 本决定部分取代[正文缩放](../feature/2026-11-06-calendar-mode-animation.md)和[标记形变](../feature/2026-11-06-calendar-marker-morph.md)的端点准备与数据返回处理，保留原布局、跨日横条、非线性运动和顶部固定约束。
 
-[当天日程展开](../feature/2026-11-10-inline-day-agenda.md)部分取代事件返回策略：详情展开时事件内容会改变布局高度，需重新准备端点；未展开时继续仅更新标记。
+[当天日程展开](../feature/2026-11-10-inline-day-agenda.md)部分取代事件返回策略；[日程滚动性能优化](2026-11-10-agenda-scroll-performance.md)进一步限定为当天事件实际变化且详情可见时重新准备端点，以更新布局高度。未展开时继续仅更新标记。
 
 ## Alternatives considered
 

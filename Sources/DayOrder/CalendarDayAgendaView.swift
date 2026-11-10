@@ -6,7 +6,10 @@ struct CalendarAgendaSelection: Equatable {
     let month: Date
 }
 
-@MainActor struct CalendarDayAgendaLayout {
+@MainActor final class CalendarDayAgendaLayout {
+    #if DEBUG
+    static var measurements = 0
+    #endif
     static let bodyLimit: CGFloat = 132
     static let maximumHeight: CGFloat = 32 + bodyLimit + 22 + 8
     static let titleWidth: CGFloat = 176
@@ -18,6 +21,9 @@ struct CalendarAgendaSelection: Equatable {
     var height: CGFloat { 32 + bodyHeight + (contentHeight > bodyHeight ? 22 : 8) + 8 }
 
     init(events: [CalendarEvent], message: String?) {
+        #if DEBUG
+        Self.measurements += 1
+        #endif
         self.events = events
         self.message = message
         rowHeights = events.map { event in
@@ -50,6 +56,7 @@ final class CalendarDayAgendaView: NSView {
     private var selection: CalendarAgendaSelection?
     private var layoutValue: CalendarDayAgendaLayout?
     private var close: (() -> Void)?
+    var itemCount: Int { layoutValue?.events.count ?? 0 }
     var pointerX: CGFloat = 0
     override var isFlipped: Bool { true }
 
@@ -82,25 +89,27 @@ final class CalendarDayAgendaView: NSView {
     func configure(selection: CalendarAgendaSelection, layout: CalendarDayAgendaLayout,
                    engine: CalendarEngine, close: @escaping () -> Void) {
         let changedDay = self.selection != selection
-        let changedContent = layoutValue?.events != layout.events || layoutValue?.message != layout.message
+        let changedContent = layoutValue !== layout
+        self.close = close
+        guard changedDay || changedContent else { return }
         self.selection = selection
         self.layoutValue = layout
-        self.close = close
         let day = engine.info(for: selection.date)
         heading.stringValue = "\(day.month)月\(day.day)日 · \(layout.events.count)项日程"
-        if changedDay || changedContent { document.configure(layout: layout, date: selection.date, engine: engine) }
+        document.configure(layout: layout, date: selection.date, engine: engine)
         if changedDay { scroll.contentView.scroll(to: .zero) }
         needsLayout = true
         needsDisplay = true
     }
 
     func clear() {
+        guard selection != nil else { return }
         selection = nil
         layoutValue = nil
         close = nil
         heading.stringValue = ""
         remaining.stringValue = ""
-        document.subviews.forEach { $0.removeFromSuperview() }
+        document.clear()
         document.frame = .zero
         scroll.contentView.scroll(to: .zero)
     }
@@ -126,6 +135,7 @@ final class CalendarDayAgendaView: NSView {
 
     @objc private func updateRemaining() {
         guard let value = layoutValue else { return }
+        document.updateVisibleRows()
         var bottom: CGFloat = 0
         let remainingCount = value.rowHeights.filter { height in
             bottom += height
@@ -149,30 +159,68 @@ final class CalendarDayAgendaView: NSView {
 }
 
 private final class CalendarAgendaDocumentView: NSView {
-    private var heights: [CGFloat] = []
+    private var value: CalendarDayAgendaLayout?
+    private var date: Date?
+    private var engine: CalendarEngine?
+    private var offsets: [CGFloat] = []
+    private var rows: [Int: CalendarAgendaEventView] = [:]
     override var isFlipped: Bool { true }
 
-    func configure(layout: CalendarDayAgendaLayout, date: Date, engine: CalendarEngine) {
+    func clear() {
         subviews.forEach { $0.removeFromSuperview() }
-        heights = layout.rowHeights
+        rows.removeAll()
+        offsets.removeAll()
+        value = nil
+        date = nil
+        engine = nil
+    }
+
+    func configure(layout: CalendarDayAgendaLayout, date: Date, engine: CalendarEngine) {
+        clear()
+        value = layout
+        self.date = date
+        self.engine = engine
+        var y: CGFloat = 0
+        offsets = layout.rowHeights.map { height in
+            defer { y += height }
+            return y
+        }
         if layout.events.isEmpty {
             let label = NSTextField(wrappingLabelWithString: layout.message ?? "当天暂无日程")
             label.font = .systemFont(ofSize: 11)
             label.textColor = CalendarSurface.secondaryTextColor
             addSubview(label)
-        } else {
-            for event in layout.events { addSubview(CalendarAgendaEventView(event: event, date: date, engine: engine)) }
         }
         needsLayout = true
     }
+
+    func updateVisibleRows() {
+        guard let value, !value.events.isEmpty, let date, let engine,
+              let clip = enclosingScrollView?.contentView else { return }
+        // 只按内层视口取样；外层日历裁切不能使展开动画的离屏端点缺少内容。
+        let visible = convert(clip.bounds, from: clip).insetBy(dx: 0, dy: -40)
+        let needed = Set(value.events.indices.filter {
+            offsets[$0] < visible.maxY && offsets[$0] + value.rowHeights[$0] > visible.minY
+        })
+        for index in Array(rows.keys) where !needed.contains(index) {
+            rows.removeValue(forKey: index)?.removeFromSuperview()
+        }
+        for index in needed.sorted() {
+            let row: CalendarAgendaEventView
+            if let existing = rows[index] { row = existing }
+            else {
+                row = CalendarAgendaEventView(event: value.events[index], date: date, engine: engine)
+                rows[index] = row
+                addSubview(row)
+            }
+            row.frame = NSRect(x: 0, y: offsets[index], width: bounds.width, height: value.rowHeights[index])
+        }
+    }
+
     override func layout() {
         super.layout()
-        var y: CGFloat = 0
-        for (index, view) in subviews.enumerated() {
-            let height = heights.isEmpty ? bounds.height : heights[index]
-            view.frame = NSRect(x: 0, y: y, width: bounds.width, height: height)
-            y += height
-        }
+        if value?.events.isEmpty == true { subviews.first?.frame = bounds }
+        else { updateVisibleRows() }
     }
 }
 

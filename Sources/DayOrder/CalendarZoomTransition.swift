@@ -424,6 +424,7 @@ final class CalendarPresentationController: NSViewController {
     private var serial = 0
     private var overlay: CalendarZoomOverlay?
     private var transitioningCalendarLayout = false
+    private var presentedAgendaEvents: [CalendarEvent] = []
     let material = NSVisualEffectView()
     private weak var transitioningShell: CalendarShellView?
     private var targetSize = NSSize(width: 320, height: 430)
@@ -510,14 +511,25 @@ final class CalendarPresentationController: NSViewController {
             prepare(.events(mode))
         }.store(in: &subscriptions)
         model.$agenda.removeDuplicates().dropFirst().sink { [weak self] value in
-            guard let self, model.events.mode != .hidden, !model.showingSettings, !model.showingYearOverview else { return }
+            guard let self else { return }
+            presentedAgendaEvents = value.flatMap { model.events.days[$0.date] } ?? []
+            guard model.events.mode != .hidden, !model.showingSettings, !model.showingYearOverview else { return }
             prepare(.agenda(value))
         }.store(in: &subscriptions)
         model.events.$revision.dropFirst().sink { [weak self] _ in
             guard let self, model.events.mode != .hidden else { return }
-            if model.agenda != nil, !model.showingSettings, !model.showingYearOverview {
-                prepare(.agenda(model.agenda))
-                return
+            if let agenda = model.agenda, !model.showingSettings, !model.showingYearOverview {
+                let values = model.events.days[agenda.date] ?? []
+                let changed = values != presentedAgendaEvents
+                presentedAgendaEvents = values
+                // 跨月查询可能只改变其他日期；屏幕外详情由真实表格更新，不启动离屏动画。
+                let visible = descendants(host.view).contains { view in
+                    view is CalendarDayAgendaView && !view.isHidden && !view.visibleRect.isEmpty
+                }
+                if changed && visible {
+                    prepare(.agenda(agenda))
+                    return
+                }
             }
             guard transitioningCalendarLayout else { return }
             // 正在准备的终点会采集最新事件；活动动画只更新标记，不重做底图和时钟。

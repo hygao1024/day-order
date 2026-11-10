@@ -31,7 +31,10 @@ final class CalendarModel: ObservableObject {
         return index
     }
     @Published var today: Date
-    @Published private(set) var agenda: CalendarAgendaSelection?
+    @Published private(set) var agenda: CalendarAgendaSelection? {
+        didSet { if agenda == nil { agendaCache = nil } }
+    }
+    private var agendaCache: (date: Date, revision: Int, layout: CalendarDayAgendaLayout)?
     @Published var selection: Date
     @Published var month: Date
     @Published private(set) var calendarScrollRevision = 0
@@ -160,11 +163,21 @@ final class CalendarModel: ObservableObject {
     }
 
     var agendaLayout: CalendarDayAgendaLayout? {
-        guard let agenda, events.mode != .hidden, !showingSettings, !showingYearOverview else { return nil }
+        guard let agenda, events.mode != .hidden, !showingSettings, !showingYearOverview else {
+            agendaCache = nil
+            return nil
+        }
         let values = events.days[agenda.date] ?? []
-        let message = events.loading ? "正在读取日程…" : events.errorMessage
-            ?? (events.authorization == .fullAccess ? nil : events.statusText)
-        return CalendarDayAgendaLayout(events: values, message: message)
+        let message = values.isEmpty ? (events.loading ? "正在读取日程…" : events.errorMessage
+            ?? (events.authorization == .fullAccess ? nil : events.statusText)) : nil
+        if let cached = agendaCache, cached.date == agenda.date, cached.layout.message == message,
+           cached.revision == events.revision || cached.layout.events == values {
+            agendaCache = (agenda.date, events.revision, cached.layout)
+            return cached.layout
+        }
+        let layout = CalendarDayAgendaLayout(events: values, message: message)
+        agendaCache = (agenda.date, events.revision, layout)
+        return layout
     }
 
     func activateVisibleDay(_ date: Date, in month: Date) {
