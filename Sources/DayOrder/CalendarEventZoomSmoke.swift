@@ -67,7 +67,7 @@ import DayOrderCore
             }
             return ink
         }
-        func iconError(_ direct: NSImage, _ replay: NSImage, rect: CGRect) throws -> Double {
+        func iconError(_ direct: NSImage, _ replay: NSImage, rect: CGRect, date: String) throws -> Double {
             guard let a = direct.representations.first as? NSBitmapImageRep,
                   let b = replay.representations.first as? NSBitmapImageRep else { throw CocoaError(.coderInvalidValue) }
             let scale = CGFloat(b.pixelsWide) / replay.size.width
@@ -99,7 +99,8 @@ import DayOrderCore
                     count += 1
                 }
             }
-            try require(count > 0 && white > 0 && cutouts > 0, "日程图标缺少白色线条或镂空细节")
+            try require(count > 0 && white > 0 && cutouts > 0,
+                        "日程图标缺少白色线条或镂空细节：\(date)，白色=\(white)，镂空=\(cutouts)，原图=\(a.pixelsWide)×\(a.pixelsHigh)，回放=\(b.pixelsWide)×\(b.pixelsHigh)")
             try require(replayWhite > 0 && replayCutouts > 0, "日程 PDF 回放丢失图标镂空或白色线条")
             return errors.min()! / Double(count * 3)
         }
@@ -154,7 +155,7 @@ import DayOrderCore
                 for marker in button.eventMarkers {
                     let frame = marker.style.frame
                     let icon = CGRect(x: frame.minX + 2.5, y: frame.midY - 3.5, width: 7, height: 7)
-                    let error = try iconError(direct, replay, rect: icon)
+                    let error = try iconError(direct, replay, rect: icon, date: button.title)
                     try require(error < 0.08, "日程 PDF 回放丢失图标镂空：像素误差=\(error)")
                     maxIconError = max(maxIconError, error)
                     let title = CGRect(x: frame.minX + 12, y: frame.minY, width: frame.width - 14, height: frame.height)

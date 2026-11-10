@@ -20,6 +20,14 @@
 
 ## 系统日历日程
 
+当天日程展开提供独立专项：
+
+```sh
+python3 scripts/run-smoke.py "$PWD/build/agenda-smoke" --calendar-agenda-smoke
+```
+
+该检查通过生产日期按钮、原生周行和展示控制器，覆盖首次选择、再次展开／收起、展开动画与端点的窗口／可视区尺寸不变、底部详情固定、后续周行下移与收起归位、月末日程通过滚动日历完整可见、切日重置、12 项日程的内部滚动与到底提示、固定标题、少量自适应和空状态、深浅色、周日／周一起始、月末跨日日程、快速反向、减少动态效果、设置与年概览返回、月份导航和 Esc 分层收起。挂起读取验证加载状态与隐藏后的迟到结果，另验证读取失败、隐藏时不访问权限或数据，以及展开时删除事件同步刷新。输出 `agenda.json`、`agenda-{light,dark}-{opening,expanded,scrolled}.png`、`agenda-last-week-{2,8}.png` 与 `result.txt`。`agenda-edge.json` 和 `agenda-edge-{light,dark}-{opening,closing}.png` 另覆盖十二月自由浏览，逐帧比较 13–19 日与 20–26 日的位移及绘制透明度，验证后者完全移出可视区及重新进入时持续平移且不淡出。长标题换行、时间和来源日历名需人工检查截图；本专项不证明真实账户同步、物理触控板手感、旁白完整体验或不同显示器上的实际操作体验。
+
 切档启动与异步数据更新提供独立专项：
 
 ```sh
@@ -221,12 +229,14 @@ python3 scripts/run-smoke.py "$PWD/build/scroll-benchmark" --scroll-benchmark
 
 ```sh
 python3 scripts/run-smoke.py "$PWD/build/readme-screenshots" --calendar-events-smoke
+python3 scripts/run-smoke.py "$PWD/build/agenda-smoke" --calendar-agenda-smoke
 ```
 
 | README 图片 | 快照来源 | 展示内容 |
 | --- | --- | --- |
 | `docs/images/calendar-light.png` | `readme-calendar-light.png` | 2026 年 10 月，今天为 31 日，选中 16 日，浅色月历与世界粮食日介绍 |
 | `docs/images/calendar-dark.png` | `readme-calendar-dark.png` | 2026 年 10 月，今天为 31 日，选中 23 日，深色月历与霜降介绍 |
+| `docs/images/calendar-agenda-light.png` | `agenda-light-expanded.png`（当天日程专项） | 2026 年 10 月 13 日，12 项日程、完整标题和独立滚动列表 |
 | `docs/images/calendar-events-light.png` | `events-11-detailed-light.png` | 2026 年 11 月，今天为 5 日、选中 18 日，显示详细日程胶囊、更多事件计数和跨周连续横条 |
 
 检查命令成功后，逐张检查日期、文字、图标、布局、选中状态和图片完整性，再将对应 PNG 原样复制到表中目标路径。月历深浅色图片在 README 中横向并排、各占一半宽度；日程图标明使用示例数据。保留原始分辨率，不添加虚构控件或改绘日期内容。若更换场景，同步更新此表和 README 图片说明。

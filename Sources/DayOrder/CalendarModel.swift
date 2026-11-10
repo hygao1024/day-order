@@ -31,6 +31,7 @@ final class CalendarModel: ObservableObject {
         return index
     }
     @Published var today: Date
+    @Published private(set) var agenda: CalendarAgendaSelection?
     @Published var selection: Date
     @Published var month: Date
     @Published private(set) var calendarScrollRevision = 0
@@ -42,8 +43,8 @@ final class CalendarModel: ObservableObject {
     var calendarSnappedMonth: Date?
     weak var overviewFocusSource: (any CalendarOverviewFocusSource)?
     private(set) var overviewFocusMonth: Date?
-    @Published var showingSettings = false
-    @Published var showingYearOverview = false
+    @Published var showingSettings = false { didSet { if showingSettings { closeAgenda() } } }
+    @Published var showingYearOverview = false { didSet { if showingYearOverview { closeAgenda() } } }
     @Published var yearDraft = ""
     @Published var showingYearEntry = false
     @Published private(set) var overviewTarget = CalendarEngine.years.lowerBound * 100 + 1
@@ -139,6 +140,7 @@ final class CalendarModel: ObservableObject {
 
     func select(_ date: Date) {
         guard engine.isSupported(date) else { return }
+        closeAgenda()
         overviewFocusMonth = nil
         selection = date
         month = engine.monthStart(date)
@@ -156,6 +158,27 @@ final class CalendarModel: ObservableObject {
         guard engine.isSupported(date) else { return }
         selection = date
     }
+
+    var agendaLayout: CalendarDayAgendaLayout? {
+        guard let agenda, events.mode != .hidden, !showingSettings, !showingYearOverview else { return nil }
+        let values = events.days[agenda.date] ?? []
+        let message = events.loading ? "正在读取日程…" : events.errorMessage
+            ?? (events.authorization == .fullAccess ? nil : events.statusText)
+        return CalendarDayAgendaLayout(events: values, message: message)
+    }
+
+    func activateVisibleDay(_ date: Date, in month: Date) {
+        guard engine.isSupported(date) else { return }
+        if selection == date {
+            if agenda != nil { closeAgenda() }
+            else if events.mode != .hidden { agenda = CalendarAgendaSelection(date: date, month: month) }
+        } else {
+            selection = date
+            if agenda != nil { agenda = CalendarAgendaSelection(date: date, month: month) }
+        }
+    }
+
+    func closeAgenda() { if agenda != nil { agenda = nil } }
 
     func browseMonth(containing date: Date) {
         let visibleMonth = engine.monthStart(engine.clamped(date))
@@ -199,6 +222,7 @@ final class CalendarModel: ObservableObject {
     }
 
     func goToToday(animated: Bool = false) {
+        closeAgenda()
         let target = engine.clamped(today)
         guard animated, !showingSettings, !showingYearOverview else {
             select(target)
@@ -217,6 +241,7 @@ final class CalendarModel: ObservableObject {
     }
 
     func moveMonth(_ amount: Int, animated: Bool = false) {
+        closeAgenda()
         guard canMoveMonth(amount) else { return }
         let target = engine.addingMonths(amount, to: calendarMonthNavigationTarget ?? month)
         let parts = engine.calendar.dateComponents([.year, .month], from: target)

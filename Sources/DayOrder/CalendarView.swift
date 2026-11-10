@@ -34,6 +34,7 @@ struct CalendarView: View {
         .task(id: appearance) { applyAppearance() }
         .task(id: model.displayedYear) { await model.loadHolidayCache(year: model.displayedYear) }
         .task(id: model.month) { events.update(month: model.month, engine: model.engine) }
+        .onChange(of: events.mode) { if events.mode == .hidden { model.closeAgenda() } }
         .onChange(of: menuBarDisplay) { updateMenuBar() }
         .onChange(of: menuBarDateFormat) { updateMenuBar() }
         .alert("需要日历访问权限", isPresented: $events.permissionSettingsPresented) {
@@ -47,6 +48,7 @@ struct CalendarView: View {
         .onExitCommand {
             if model.showingSettings { model.showingSettings = false }
             else if model.showingYearOverview { model.dismissYearLevel() }
+            else if model.agenda != nil { model.closeAgenda() }
             else { dismiss() }
         }
     }

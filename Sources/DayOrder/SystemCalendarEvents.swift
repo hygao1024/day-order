@@ -52,7 +52,7 @@ actor EventKitCalendarSource: SystemCalendarSource {
             return CalendarEvent(id: event.eventIdentifier ?? event.calendarItemIdentifier,
                                  title: event.title ?? "", start: start, end: end,
                                  allDay: event.isAllDay,
-                                 color: .init(red: color.redComponent, green: color.greenComponent, blue: color.blueComponent))
+                                 color: .init(red: color.redComponent, green: color.greenComponent, blue: color.blueComponent), calendarTitle: calendar.title)
         }
     }
 }

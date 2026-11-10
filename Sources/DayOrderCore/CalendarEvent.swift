@@ -48,8 +48,9 @@ public struct CalendarEvent: Equatable, Sendable {
     public let end: Date
     public let allDay: Bool
     public let color: Color
+    public let calendarTitle: String
 
-    public init(id: String, title: String, start: Date, end: Date, allDay: Bool, color: Color) {
+    public init(id: String, title: String, start: Date, end: Date, allDay: Bool, color: Color, calendarTitle: String = "") {
         self.id = id
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         self.title = trimmed.isEmpty ? "无标题日程" : trimmed
@@ -57,6 +58,7 @@ public struct CalendarEvent: Equatable, Sendable {
         self.end = end
         self.allDay = allDay
         self.color = color
+        self.calendarTitle = calendarTitle
     }
 }
 

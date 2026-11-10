@@ -102,6 +102,8 @@ struct CalendarTimelineView: NSViewRepresentable {
         private var holidayRevision: Int
         private var eventRevision: Int
         private var eventMode: CalendarEventDisplay
+        private var agenda: CalendarAgendaSelection?
+        private var agendaHeight: CGFloat = 0
         private var updating = false
         private var scrollTask: Task<Void, Never>?
         private var scrollSerial = 0
@@ -158,9 +160,15 @@ struct CalendarTimelineView: NSViewRepresentable {
             let rebuilt = firstWeekday != timeline.firstWeekday
             let resized = eventMode != model.events.mode
             let requestedNavigation = revision != model.calendarScrollRevision
-            if resized && !requestedNavigation { recordViewport() }
+            let nextAgenda = model.agendaLayout == nil ? nil : model.agenda
+            let nextHeight = model.agendaLayout?.height ?? 0
+            let agendaChanged = agenda != nextAgenda || agendaHeight != nextHeight
+            let oldAgendaRow = agenda.map { timeline.weekRow(containing: $0.date, inMonth: $0.month) }
+            if (resized || agendaChanged) && !requestedNavigation { recordViewport() }
+            agenda = nextAgenda
+            agendaHeight = nextHeight
             let changed = self.options != options || today != model.today || selection != model.selection
-                || holidayRevision != model.holidayRevision || eventRevision != model.events.revision || resized
+                || holidayRevision != model.holidayRevision || eventRevision != model.events.revision || resized || agendaChanged || agenda != nil
             self.options = options
             today = model.today
             selection = model.selection
@@ -172,23 +180,26 @@ struct CalendarTimelineView: NSViewRepresentable {
                 timeline = model.calendarTimeline(firstWeekday: firstWeekday)
                 days.removeAll()
                 table.reloadData()
-            } else if resized {
+            } else if resized || agendaChanged {
                 // 原生表格先同步落到真实端点；可见运动只由展示层的弹簧拥有。
                 NSAnimationContext.runAnimationGroup { context in
                     context.duration = 0
                     context.allowsImplicitAnimation = false
-                    table.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<timeline.rows.count))
+                    let newAgendaRow = agenda.map { timeline.weekRow(containing: $0.date, inMonth: $0.month) }
+                    let changedRows = resized ? IndexSet(integersIn: 0..<timeline.rows.count)
+                        : IndexSet([oldAgendaRow, newAgendaRow].compactMap { $0 })
+                    table.noteHeightOfRows(withIndexesChanged: changedRows)
                     table.layoutSubtreeIfNeeded()
                 }
             }
-            if revision != model.calendarScrollRevision || rebuilt || resized {
+            if revision != model.calendarScrollRevision || rebuilt || resized || agendaChanged {
                 cancelSnap()
                 scrollSerial += 1
                 scrollTask?.cancel()
                 scrollTask = nil
-                let restoring = (revision == nil || rebuilt || (resized && !requestedNavigation)) ? model.calendarViewport : nil
+                let restoring = (revision == nil || rebuilt || ((resized || agendaChanged) && !requestedNavigation)) ? model.calendarViewport : nil
                 let restoredMonth = model.calendarSnappedMonth
-                let animate = revision != nil && !rebuilt && !resized
+                let animate = revision != nil && !rebuilt && !resized && !agendaChanged
                 revision = model.calendarScrollRevision
                 table.layoutSubtreeIfNeeded()
                 if animate, let startingSelection = model.calendarScrollAnimationSelection,
@@ -215,7 +226,8 @@ struct CalendarTimelineView: NSViewRepresentable {
                                            requestedRevision: requestedRevision, selectionOnArrival: target,
                                            startingSelection: startingSelection, easeOut: true)
                     }
-                } else if let restoring, restoredMonth == nil {
+                } else if let restoring, restoredMonth == nil || (agendaChanged && !resized) {
+                    // 详情展开保留实际视口的小数偏移，不能因已标记吸附而重新贴齐月首。
                     moveViewport(to: table.rect(ofRow: timeline.weekRow(containing: restoring.date, inMonth: restoring.month)).minY + restoring.offset)
                 } else {
                     let layout = monthLayout(for: restoredMonth ?? model.calendarScrollTarget)
@@ -447,7 +459,8 @@ struct CalendarTimelineView: NSViewRepresentable {
                 let scale = tableView.window?.backingScaleFactor ?? 2
                 let unit = eventMode.viewportHeight * scale / CGFloat(weeks.count)
                 let index = CGFloat(row - weeks.lowerBound)
-                return (floor((index + 1) * unit) - floor(index * unit)) / scale
+                let extra = agenda.map { timeline.weekRow(containing: $0.date, inMonth: $0.month) == row ? agendaHeight : 0 } ?? 0
+                return (floor((index + 1) * unit) - floor(index * unit)) / scale + extra
             }
         }
         func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
@@ -511,16 +524,33 @@ private final class CalendarMonthLabel: NSView {
 
 final class CalendarWeekView: NSView {
     private let buttons = (0..<7).map { _ in CalendarDayButton(frame: .zero) }
+    let agendaView = CalendarDayAgendaView(frame: .zero)
+    private var agendaHeight: CGFloat = 0
     override var isFlipped: Bool { true }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         buttons.forEach(addSubview)
+        addSubview(agendaView)
+        agendaView.isHidden = true
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func configure(days: [DayInfo], sectionMonth: Date, model: CalendarModel, options: CalendarContentOptions) {
         let mode = model.events.mode
+        if let agenda = model.agenda, agenda.month == sectionMonth,
+           days.contains(where: { $0.date == agenda.date }), let value = model.agendaLayout {
+            agendaHeight = value.height
+            agendaView.isHidden = false
+            agendaView.configure(selection: agenda, layout: value, engine: model.engine) { [weak model] in model?.closeAgenda() }
+            if let index = days.firstIndex(where: { $0.date == agenda.date }) {
+                agendaView.pointerX = (CGFloat(index) + 0.5) * (296 / 7)
+            }
+        } else {
+            agendaHeight = 0
+            agendaView.isHidden = true
+            agendaView.clear()
+        }
         let layout = CalendarEventWeekLayout(dates: days.map(\.date), days: model.events.days, engine: model.engine)
         let visible = layout.visibleSegments(limit: mode == .detailed ? 2 : 3, reservingOverflow: mode == .detailed)
         for (column, pair) in zip(buttons, days).enumerated() {
@@ -533,9 +563,13 @@ final class CalendarWeekView: NSView {
                 events: model.events.days[day.date] ?? [], mode: mode,
                 segments: segments, column: column, overflow: overflow,
                 today: model.today, selection: model.selection, enabled: model.engine.isSupported(day.date)) {
-                    [weak model] in model?.selectVisibleDay(day.date)
+                    [weak model] in model?.activateVisibleDay(day.date, in: sectionMonth)
                 }
+            button.agendaExpanded = model.agenda?.date == day.date && !agendaView.isHidden
+            button.setAccessibilityHelp(mode == .hidden ? nil : model.agenda?.date == day.date
+                ? "再次点击收起当天日程" : "选中后再次点击展开当天日程")
         }
+        needsLayout = true
     }
 
     override func layout() {
@@ -544,8 +578,9 @@ final class CalendarWeekView: NSView {
         let width = (bounds.width - 2 * inset) / 7
         for (index, button) in buttons.enumerated() {
             let height = 46 + button.eventMode.extraRowHeight
-            button.frame = NSRect(x: inset + CGFloat(index) * width, y: (bounds.height - height) / 2, width: width, height: height)
+            button.frame = NSRect(x: inset + CGFloat(index) * width, y: (bounds.height - agendaHeight - height) / 2, width: width, height: height)
         }
+        agendaView.frame = NSRect(x: inset, y: bounds.height - agendaHeight, width: bounds.width - 2 * inset, height: agendaHeight)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -559,6 +594,7 @@ final class CalendarWeekView: NSView {
 final class CalendarDayButton: NSButton, CalendarZoomParticipant {
     var zoomHiddenDays: Set<Int> = []
     var snapshotHidesEventMarkers = false
+    var agendaExpanded = false
     private var day: DayInfo?
     private var annotation: Annotation?
     private var holiday: HolidayDay?
@@ -656,6 +692,16 @@ final class CalendarDayButton: NSButton, CalendarZoomParticipant {
             drawText(holiday.badge, rect: NSRect(x: bounds.width - 9, y: 3, width: 9, height: 10),
                      font: .systemFont(ofSize: 8, weight: .medium),
                      color: !isInMonth ? muted : holiday.isOffDay ? Self.accent : CalendarSurface.secondaryTextColor)
+        }
+        if selected, eventMode != .hidden {
+            NSColor.secondaryLabelColor.setStroke()
+            let path = NSBezierPath()
+            path.lineWidth = 0.8
+            let y: CGFloat = agendaExpanded ? 26 : 23
+            path.move(to: NSPoint(x: bounds.width - 7, y: y))
+            path.line(to: NSPoint(x: bounds.width - 5, y: agendaExpanded ? y - 2 : y + 2))
+            path.line(to: NSPoint(x: bounds.width - 3, y: y))
+            path.stroke()
         }
         if !snapshotHidesEventMarkers, eventMode != .hidden, !events.isEmpty {
             NSGraphicsContext.saveGraphicsState()

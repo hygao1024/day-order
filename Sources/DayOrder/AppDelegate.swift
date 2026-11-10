@@ -169,6 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if event.keyCode == 53 {
                     if model.showingSettings { model.showingSettings = false }
                     else if model.showingYearOverview { model.dismissYearLevel() }
+                    else if model.agenda != nil { model.closeAgenda() }
                     else { self.panel.performClose(nil) }
                     return true
                 }
@@ -191,6 +192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func panelDidClose() {
+        model?.closeAgenda()
         presentationController?.cancelTransition()
         removeKeyboardMonitor()
     }
@@ -253,6 +255,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try await CalendarRefreshSmoke.verify(model: model, defaults: defaults, root: root,
                     presentation: presentation, directory: directory,
                     close: { self.panel.close() }, reopen: { self.showPanel() })
+                NSApp.terminate(nil)
+                return
+            }
+            if ProcessInfo.processInfo.arguments.contains("--calendar-agenda-smoke") {
+                guard let source = smokeCalendarSource, let presentation = presentationController else { throw CocoaError(.coderInvalidValue) }
+                defaults.set(1, forKey: "firstWeekday")
+                try await CalendarAgendaSmoke.verify(model: model, presentation: presentation, source: source,
+                    defaults: defaults, directory: directory) { view, name in
+                    try self.saveViewSnapshot(view, name: name, to: directory)
+                }
+                try "当天日程展开、内部滚动、日期切换及隐藏边界检查通过。\n"
+                    .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
                 NSApp.terminate(nil)
                 return
             }

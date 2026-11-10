@@ -106,7 +106,8 @@ private struct CalendarZoomSnapshot {
     @MainActor static var modeCaptureMilliseconds = 0.0
     #endif
 
-    @MainActor static func capture(_ root: NSView, month: Int, capturesModeElements: Bool = false) -> Self? {
+    @MainActor static func capture(_ root: NSView, month: Int, capturesModeElements: Bool = false,
+                                  modeOverflow: CGFloat = 0) -> Self? {
         #if DEBUG
         let captureStarted = ProcessInfo.processInfo.systemUptime
         if capturesModeElements { modeCaptureCount += 1 }
@@ -129,7 +130,7 @@ private struct CalendarZoomSnapshot {
         }.filter { !$0.1.isEmpty }
         let anchors = participants.flatMap(\.1)
         let months = views.compactMap { $0 as? MonthPairView }.flatMap { $0.zoomMonthFrames(in: root) }
-        if capturesModeElements, let mode = captureModeElements(scroll, root: root) {
+        if capturesModeElements, let mode = captureModeElements(scroll, root: root, overflow: modeOverflow) {
             var snapshot = Self(content: mode.content, size: root.bounds.size, card: card, anchors: anchors, month: month,
                                 backingScale: root.window?.backingScaleFactor ?? 2)
             snapshot.modeElements = mode.elements
@@ -240,12 +241,13 @@ private struct CalendarZoomSnapshot {
         return snapshot
     }
 
-    @MainActor private static func captureModeElements(_ scroll: NSScrollView, root: NSView)
+    @MainActor private static func captureModeElements(_ scroll: NSScrollView, root: NSView, overflow: CGFloat)
         -> (elements: [CalendarModeElement], content: NSImage)? {
         guard let table = scroll.documentView as? NSTableView, table.identifier?.rawValue == "calendarTimeline" else { return nil }
         // 目标正文可能高于动画起点窗口；端点取逻辑视口，不能被旧窗口裁掉末周。
         let logicalViewport = CGRect(origin: scroll.contentView.bounds.origin, size: scroll.bounds.size)
-        let viewport = table.convert(logicalViewport, from: scroll.contentView)
+        // 展开使周行经过可视边缘；两端都保留最大详情高度内的行，离场由卡片裁切。
+        let viewport = table.convert(logicalViewport, from: scroll.contentView).insetBy(dx: 0, dy: -overflow)
         let rows = table.rows(in: viewport)
         var elements: [CalendarModeElement] = []
         var rowImages: [(NSImage, CGRect)] = []
@@ -298,6 +300,18 @@ private struct CalendarZoomSnapshot {
                         image: CalendarModeImage(image: image,
                             offset: CGPoint(x: cell.minX - buttonFrame.minX, y: cell.minY - buttonFrame.minY)),
                         markers: button.eventMarkers))
+                }
+                if let week = view as? CalendarWeekView, !week.agendaView.isHidden {
+                    let agendaFrame = root.convert(week.agendaView.bounds, from: week.agendaView)
+                    let aligned = root.backingAlignedRect(agendaFrame, options: .alignAllEdgesOutward)
+                    let pixels = CGRect(x: ((aligned.minX - area.minX) * scaleX).rounded(),
+                                        y: ((aligned.minY - area.minY) * scaleY).rounded(),
+                                        width: (aligned.width * scaleX).rounded(), height: (aligned.height * scaleY).rounded())
+                    guard let cropped = weekImage.cropping(to: pixels) else { return nil }
+                    // 负标识属于周内详情，不占用七列日期和周分隔线的既有身份。
+                    elements.append(CalendarModeElement(id: -(row + 1), frame: agendaFrame,
+                        image: CalendarModeImage(image: NSImage(cgImage: cropped, size: aligned.size),
+                            offset: CGPoint(x: aligned.minX - agendaFrame.minX, y: aligned.minY - agendaFrame.minY))))
                 }
                 let inset = CalendarTimelineView.contentInset
                 elements.append(CalendarModeElement(id: row * 8 + 7,
@@ -409,7 +423,7 @@ final class CalendarPresentationController: NSViewController {
     private var lastFrameTime = 0.0
     private var serial = 0
     private var overlay: CalendarZoomOverlay?
-    private var transitioningEventMode = false
+    private var transitioningCalendarLayout = false
     let material = NSVisualEffectView()
     private weak var transitioningShell: CalendarShellView?
     private var targetSize = NSSize(width: 320, height: 430)
@@ -434,6 +448,7 @@ final class CalendarPresentationController: NSViewController {
     var movingCardVelocity: NSRect? { overlay?.cardVelocity }
     var canvasSample: [String: Double]? { overlay?.canvasSample }
     var eventModeSample: [String: Double]? { overlay?.modeSample }
+    var eventModeCells: [Int: [String: Double]] { overlay?.modeCells ?? [:] }
     var eventMarkerSample: [String: [String: Double]]? { overlay?.markerSample }
     var eventCaptureCounters: [String: Double] {
         ["snapshots": Double(CalendarZoomSnapshot.modeCaptureCount),
@@ -494,8 +509,17 @@ final class CalendarPresentationController: NSViewController {
             guard let self, !model.showingSettings, !model.showingYearOverview else { return }
             prepare(.events(mode))
         }.store(in: &subscriptions)
+        model.$agenda.removeDuplicates().dropFirst().sink { [weak self] value in
+            guard let self, model.events.mode != .hidden, !model.showingSettings, !model.showingYearOverview else { return }
+            prepare(.agenda(value))
+        }.store(in: &subscriptions)
         model.events.$revision.dropFirst().sink { [weak self] _ in
-            guard let self, transitioningEventMode, model.events.mode != .hidden else { return }
+            guard let self, model.events.mode != .hidden else { return }
+            if model.agenda != nil, !model.showingSettings, !model.showingYearOverview {
+                prepare(.agenda(model.agenda))
+                return
+            }
+            guard transitioningCalendarLayout else { return }
             // 正在准备的终点会采集最新事件；活动动画只更新标记，不重做底图和时钟。
             guard preparation == nil, let overlay else { return }
             #if DEBUG
@@ -514,7 +538,7 @@ final class CalendarPresentationController: NSViewController {
             }
         }.store(in: &subscriptions)
         model.$calendarScrollRevision.dropFirst().sink { [weak self] _ in
-            guard let self, transitioningEventMode else { return }
+            guard let self, transitioningCalendarLayout else { return }
             finishTransition()
         }.store(in: &subscriptions)
     }
@@ -550,7 +574,7 @@ final class CalendarPresentationController: NSViewController {
         #endif
         overlay?.removeFromSuperview()
         overlay = nil
-        transitioningEventMode = false
+        transitioningCalendarLayout = false
         transitioningShell?.endTransition()
         transitioningShell = nil
         progress = 1
@@ -571,14 +595,22 @@ final class CalendarPresentationController: NSViewController {
         case year(Bool)
         case settings(Bool)
         case events(CalendarEventDisplay)
+        case agenda(CalendarAgendaSelection?)
 
-        var changesEventMode: Bool {
-            if case .events = self { return true }
-            return false
+        var changesCalendarLayout: Bool {
+            switch self {
+            case .events, .agenda: return true
+            default: return false
+            }
         }
 
         var zoomsDates: Bool {
             if case .year = self { return true }
+            return false
+        }
+
+        var changesAgenda: Bool {
+            if case .agenda = self { return true }
             return false
         }
 
@@ -587,6 +619,7 @@ final class CalendarPresentationController: NSViewController {
             case .year(let year): return model.showingYearOverview == year && !model.showingSettings
             case .settings(let settings): return model.showingSettings == settings
             case .events(let mode): return model.events.mode == mode && !model.showingSettings && !model.showingYearOverview
+            case .agenda(let value): return model.agenda == value && !model.showingSettings && !model.showingYearOverview
             }
         }
     }
@@ -594,9 +627,11 @@ final class CalendarPresentationController: NSViewController {
     private func prepare(_ transition: Transition) {
         guard view.window?.isVisible == true else { cancelTransition(); return }
         if transition.zoomsDates, model.showingSettings { return }
-        transitioningEventMode = transition.changesEventMode
+        let modeOverflow = transition.changesCalendarLayout && (transition.changesAgenda || model.agenda != nil)
+            ? CalendarDayAgendaLayout.maximumHeight : 0
+        transitioningCalendarLayout = transition.changesCalendarLayout
         #if DEBUG
-        if transition.changesEventMode { eventPreparationCount += 1 }
+        if transition.changesCalendarLayout { eventPreparationCount += 1 }
         #endif
         // 准备新终点时继续展示旧运动；只有关闭才立即释放全部动画状态。
         serial += 1
@@ -623,7 +658,7 @@ final class CalendarPresentationController: NSViewController {
         }
         if overlay == nil {
             guard let source = CalendarZoomSnapshot.capture(host.view, month: month,
-                                                           capturesModeElements: transition.changesEventMode) else { cancelTransition(); return }
+                capturesModeElements: transition.changesCalendarLayout, modeOverflow: modeOverflow) else { cancelTransition(); return }
             let layer = CalendarZoomOverlay(source: source)
             layer.frame = view.bounds
             layer.appearance = host.view.effectiveAppearance
@@ -636,7 +671,7 @@ final class CalendarPresentationController: NSViewController {
             shell.transitionHeight = source.size.height
             shell.content.alphaValue = 0
         }
-        shell.prepareTransition(preservesChrome: transition.changesEventMode)
+        shell.prepareTransition(preservesChrome: transition.changesCalendarLayout)
         #if DEBUG
         preparationPhases["sourceMS"] = (ProcessInfo.processInfo.systemUptime - preparationStarted) * 1000
         #endif
@@ -672,7 +707,7 @@ final class CalendarPresentationController: NSViewController {
             preparationPhases["layoutMS"] = (captureStarted - layoutStarted) * 1000
             #endif
             let destination = CalendarZoomSnapshot.capture(host.view, month: month,
-                                                           capturesModeElements: transition.changesEventMode)
+                capturesModeElements: transition.changesCalendarLayout, modeOverflow: modeOverflow)
             shell.content.alphaValue = 0
             guard let destination else { cancelTransition(); return }
             #if DEBUG
@@ -690,7 +725,7 @@ final class CalendarPresentationController: NSViewController {
             #endif
             guard layer.retarget(destination, duration: transition.zoomsDates ? 0.3 : 0.22,
                                  reduceMotion: reduced, zoomsDates: transition.zoomsDates,
-                                 changesEventMode: transition.changesEventMode) else {
+                                 changesCalendarLayout: transition.changesCalendarLayout) else {
                 cancelTransition()
                 return
             }
@@ -1188,6 +1223,7 @@ private final class CalendarModeGrid {
         #if DEBUG
         renderedMarkers = [:]
         renderedFrames = [:]
+        renderedCells = [:]
         #endif
         for id in cells.keys.sorted() {
             cells[id]!.draw(fraction: fraction, scale: scale)
@@ -1214,12 +1250,17 @@ private final class CalendarModeGrid {
                     "error": (value.animatableData - target.animatableData).magnitudeSquared.squareRoot()]
             }
             renderedFrames[id] = cells[id]!.frame.value
+            renderedCells[id] = ["y": cells[id]!.frame.value.minY,
+                "targetY": cells[id]!.frame.target.minY,
+                "opacity": (cells[id]!.source == nil ? 0 : 1 - fraction)
+                    + (cells[id]!.destination == nil ? 0 : fraction)]
             #endif
         }
     }
 
     #if DEBUG
     private var renderedFrames: [Int: CGRect] = [:]
+    private(set) var renderedCells: [Int: [String: Double]] = [:]
     private(set) var renderedMarkers: [String: [String: Double]] = [:]
     var motion: [Int: (CGRect, CGRect.AnimatableData)] {
         cells.mapValues { ($0.frame.value, $0.frame.velocity) }
@@ -1248,6 +1289,7 @@ private final class CalendarZoomOverlay: NSView {
     var canvasSample: [String: Double]? { canvasOpacity > 0 ? canvas?.sample : nil }
     var detailHandoffError: CGFloat? { canvasOpacity > 0 ? canvas?.detailHandoffError : nil }
     var modeSample: [String: Double]? { modeGrid?.sample }
+    var modeCells: [Int: [String: Double]] { modeGrid?.renderedCells ?? [:] }
     var markerSample: [String: [String: Double]]? { modeGrid?.renderedMarkers }
     var modeMotion: [Int: (CGRect, CGRect.AnimatableData)]? { modeGrid?.motion }
     #endif
@@ -1312,14 +1354,14 @@ private final class CalendarZoomOverlay: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { cardFrame.contains(point) ? self : nil }
 
     func retarget(_ destination: CalendarZoomSnapshot, duration: Double, reduceMotion: Bool, zoomsDates: Bool,
-                  changesEventMode: Bool) -> Bool {
+                  changesCalendarLayout: Bool) -> Bool {
         let leavingMode = needsModeCanvas
         let previous = modeCanvas ?? self.destination ?? source
         modeCanvas = nil
         let outgoingDays = Set(previous.anchors.map(\.day))
         matchedDayCount = destination.anchors.filter { outgoingDays.contains($0.day) && previous.month == destination.month }.count
         // 已有画布跨设置保留，返回时可以继续原来的位置和速度。
-        let canReuse = !changesEventMode && !leavingMode && canvas?.overview.month == destination.month && !destination.anchors.isEmpty
+        let canReuse = !changesCalendarLayout && !leavingMode && canvas?.overview.month == destination.month && !destination.anchors.isEmpty
         if canReuse { matchedDayCount = canvas!.matchedDayCount }
         let candidate: CalendarZoomCanvas?
         if !canReuse, zoomsDates, previous.isOverview != destination.isOverview {
@@ -1328,7 +1370,7 @@ private final class CalendarZoomOverlay: NSView {
                                            startsInOverview: previous.isOverview)
         } else { candidate = nil }
         let nextReducedMotion = reduceMotion || (zoomsDates && !canReuse && candidate == nil)
-        if self.destination != nil && !(changesEventMode && !nextReducedMotion && modeGrid != nil) {
+        if self.destination != nil && !(changesCalendarLayout && !nextReducedMotion && modeGrid != nil) {
             // 通用正文只保留当前混合结果；活动画布独立保留，跨页面淡化也不冻结其速度。
             drawingBodyOnly = !nextReducedMotion && (canReuse || (canvas != nil && candidate == nil))
             let image = CalendarSnapshotImage.capture(self, in: cardFrame)
@@ -1338,7 +1380,7 @@ private final class CalendarZoomOverlay: NSView {
                                           card: cardFrame, anchors: [], month: previous.month)
         }
         let nextModeGrid: CalendarModeGrid?
-        if changesEventMode, !nextReducedMotion, destination.modeElements != nil {
+        if changesCalendarLayout, !nextReducedMotion, destination.modeElements != nil {
             nextModeGrid = modeGrid ?? (source.modeElements == nil ? nil : CalendarModeGrid(source: source))
             if let nextModeGrid, !nextModeGrid.retarget(destination, from: card.value, fraction: contentFraction) { return false }
         } else { nextModeGrid = nil }

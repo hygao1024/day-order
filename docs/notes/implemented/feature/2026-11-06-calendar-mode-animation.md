@@ -20,6 +20,8 @@ Status: implemented
 
 日程端点的批量采样、按需年概览画布以及事件返回后的局部更新由[切档启动优化](../bug-fix/2026-11-06-calendar-mode-latency.md)部分取代，本文保留运动与形变接续的理由。
 
+[当天日程展开](2026-11-10-inline-day-agenda.md)进一步复用本布局过渡，在原周行追加详情单元，不改变核心周索引。
+
 ## Alternatives considered
 
 - 只为模式赋值添加 SwiftUI 动画：正文由原生表格和独立窗口拥有，不能自动同步行高、窗口与底栏。
