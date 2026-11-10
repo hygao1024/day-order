@@ -526,7 +526,7 @@ final class CalendarPresentationController: NSViewController {
                 let visible = descendants(host.view).contains { view in
                     view is CalendarDayAgendaView && !view.isHidden && !view.visibleRect.isEmpty
                 }
-                if changed && visible {
+                if changed && visible && model.calendarScrollAnimationSelection == nil {
                     prepare(.agenda(agenda))
                     return
                 }

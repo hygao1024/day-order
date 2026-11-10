@@ -169,7 +169,11 @@ struct CalendarTimelineView: NSViewRepresentable {
             let nextHeight = nextLayout?.height ?? 0
             let agendaContentChanged = agendaLayout !== nextLayout
             agendaLayout = nextLayout
-            let agendaChanged = agenda != nextAgenda || agendaHeight != nextHeight
+            let agendaSelectionChanged = agenda != nextAgenda
+            let agendaChanged = agendaSelectionChanged || agendaHeight != nextHeight
+            // 跨月查询会补回原日期详情并改变高度，不能因此取消正在执行的导航。
+            let continuingNavigation = navigating && !requestedNavigation && !rebuilt && !resized
+                && !agendaSelectionChanged
             let oldAgendaRow = agendaRow
             if (resized || agendaChanged) && !requestedNavigation { recordViewport() }
             agenda = nextAgenda
@@ -201,7 +205,7 @@ struct CalendarTimelineView: NSViewRepresentable {
                     table.layoutSubtreeIfNeeded()
                 }
             }
-            if revision != model.calendarScrollRevision || rebuilt || resized || agendaChanged {
+            if requestedNavigation || rebuilt || resized || (agendaChanged && !continuingNavigation) {
                 cancelSnap()
                 scrollSerial += 1
                 scrollTask?.cancel()

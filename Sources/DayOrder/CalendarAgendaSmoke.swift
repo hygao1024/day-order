@@ -249,6 +249,7 @@ import DayOrderCore
                 end: began.addingTimeInterval(7200), allDay: false,
                 color: .init(red: 0.3, green: 0.45, blue: 0.95), calendarTitle: "项目日历")
             await source.configure(access: .fullAccess, values: [span])
+            model.closeAgenda()
             model.select(date)
             try await finish()
             try await Task.sleep(for: .milliseconds(100))
@@ -268,9 +269,10 @@ import DayOrderCore
             try save(presentation.view, "agenda-last-week-\(month)")
             model.openYearOverview()
             try await finish()
-            try require(model.agenda == nil, "进入年概览没有收起详情")
+            try require(model.agenda?.date == date, "进入年概览丢失展开状态")
             model.dismissYearLevel()
             try await finish()
+            try require(try agenda().heading.stringValue.contains("\(number)日 · 1项日程"), "年概览返回未恢复原详情")
         }
         testMonth = 10
         model.select(model.engine.date(2026, 10, 14))
@@ -339,8 +341,11 @@ import DayOrderCore
                     && agenda().scroll.documentView?.subviews.count == 2, "展开列表没有刷新删除后的日程")
         model.showingSettings = true
         try await finish()
-        try require(model.agenda == nil, "进入设置没有清除展开状态")
+        try require(model.agenda?.date == model.selection, "进入设置丢失展开状态")
         model.showingSettings = false
+        try await finish()
+        try require(try agenda().heading.stringValue.contains("13日 · 2项日程"), "设置返回未恢复原详情")
+        model.closeAgenda()
         try await finish()
         presentation.reduceMotionOverride = true
         try click(13)
@@ -359,7 +364,7 @@ import DayOrderCore
         try await finish()
         model.moveMonth(1)
         try await finish()
-        try require(model.agenda == nil, "月份导航保留了旧日程展开状态")
+        try require(model.agenda?.date == model.engine.date(2026, 10, 13), "月份导航丢失展开状态")
         try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
             .write(to: directory.appendingPathComponent("agenda.json"))
     }

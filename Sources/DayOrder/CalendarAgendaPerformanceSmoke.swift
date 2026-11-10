@@ -40,6 +40,7 @@ import DayOrderCore
             await source.configure(access: .fullAccess, values: values)
             model.events.choose(.detailed)
             for expanded in [false, true] {
+                model.closeAgenda()
                 model.select(date)
                 try await settle()
                 guard let table = descendants(presentation.host.view).compactMap({ $0 as? NSTableView })

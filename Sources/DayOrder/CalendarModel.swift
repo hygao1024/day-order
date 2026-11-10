@@ -46,8 +46,8 @@ final class CalendarModel: ObservableObject {
     var calendarSnappedMonth: Date?
     weak var overviewFocusSource: (any CalendarOverviewFocusSource)?
     private(set) var overviewFocusMonth: Date?
-    @Published var showingSettings = false { didSet { if showingSettings { closeAgenda() } } }
-    @Published var showingYearOverview = false { didSet { if showingYearOverview { closeAgenda() } } }
+    @Published var showingSettings = false
+    @Published var showingYearOverview = false
     @Published var yearDraft = ""
     @Published var showingYearEntry = false
     @Published private(set) var overviewTarget = CalendarEngine.years.lowerBound * 100 + 1
@@ -143,7 +143,6 @@ final class CalendarModel: ObservableObject {
 
     func select(_ date: Date) {
         guard engine.isSupported(date) else { return }
-        closeAgenda()
         overviewFocusMonth = nil
         selection = date
         month = engine.monthStart(date)
@@ -183,7 +182,7 @@ final class CalendarModel: ObservableObject {
     func activateVisibleDay(_ date: Date, in month: Date) {
         guard engine.isSupported(date) else { return }
         if selection == date {
-            if agenda != nil { closeAgenda() }
+            if agenda == CalendarAgendaSelection(date: date, month: month) { closeAgenda() }
             else if events.mode != .hidden { agenda = CalendarAgendaSelection(date: date, month: month) }
         } else {
             selection = date
@@ -235,7 +234,6 @@ final class CalendarModel: ObservableObject {
     }
 
     func goToToday(animated: Bool = false) {
-        closeAgenda()
         let target = engine.clamped(today)
         guard animated, !showingSettings, !showingYearOverview else {
             select(target)
@@ -254,7 +252,6 @@ final class CalendarModel: ObservableObject {
     }
 
     func moveMonth(_ amount: Int, animated: Bool = false) {
-        closeAgenda()
         guard canMoveMonth(amount) else { return }
         let target = engine.addingMonths(amount, to: calendarMonthNavigationTarget ?? month)
         let parts = engine.calendar.dateComponents([.year, .month], from: target)
