@@ -12,14 +12,16 @@ struct CalendarAgendaSelection: Equatable {
     #endif
     static let bodyLimit: CGFloat = 132
     static let topInset: CGFloat = 12
-    static let maximumHeight: CGFloat = topInset + bodyLimit + 22 + 8
+    // 灰底下方留出 6 pt 净间距，另容纳周分隔线的 0.5 pt 高度。
+    static let backgroundBottomInset: CGFloat = 6.5
+    static let maximumHeight: CGFloat = topInset + bodyLimit + 22 + 4 + backgroundBottomInset
     static let titleWidth: CGFloat = 176
     let events: [CalendarEvent]
     let rowHeights: [CGFloat]
     let message: String?
     var contentHeight: CGFloat { rowHeights.reduce(0, +) }
     var bodyHeight: CGFloat { events.isEmpty ? 38 : min(Self.bodyLimit, contentHeight) }
-    var height: CGFloat { Self.topInset + bodyHeight + (contentHeight > bodyHeight ? 22 : 8) + 8 }
+    var height: CGFloat { Self.topInset + bodyHeight + (contentHeight > bodyHeight ? 22 : 8) + 4 + Self.backgroundBottomInset }
 
     init(events: [CalendarEvent], message: String?) {
         #if DEBUG
@@ -135,7 +137,9 @@ final class CalendarDayAgendaView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         // 背景边缘与日期选中底的 0.5 pt 留白对齐。
-        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 4), xRadius: 8, yRadius: 8)
+        let background = NSRect(x: bounds.minX + 0.5, y: bounds.minY + 4, width: bounds.width - 1,
+                                height: bounds.height - 4 - CalendarDayAgendaLayout.backgroundBottomInset)
+        let shape = NSBezierPath(roundedRect: background, xRadius: 8, yRadius: 8)
         CalendarSurface.selectionBackgroundColor.setFill()
         shape.fill()
     }
