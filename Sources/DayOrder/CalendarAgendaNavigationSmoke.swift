@@ -126,7 +126,7 @@ import DayOrderCore
             try require(model.agenda == expanded && presentation.eventPreparationCount == preparations,
                         "返回今天改变了展开状态或重新准备了详情动画")
             let agenda = descendants(table).compactMap { $0 as? CalendarDayAgendaView }.first { !$0.isHidden }
-            try require(agenda?.heading.stringValue.contains("\(number)日 · \(values.count)项日程") == true,
+            try require(agenda?.scroll.accessibilityLabel() == "\(month)月\(number)日 · \(values.count)项日程",
                         "返回后原日期详情未显示")
             try require(agenda.map { descendants($0).compactMap { $0 as? NSTextField }
                 .contains { $0.stringValue == "导航后保留的日程" } } == true, "返回后原日程内容丢失")

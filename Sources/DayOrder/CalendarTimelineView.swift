@@ -104,6 +104,7 @@ struct CalendarTimelineView: NSViewRepresentable {
         private var eventMode: CalendarEventDisplay
         private var agenda: CalendarAgendaSelection?
         private var agendaHeight: CGFloat = 0
+        private var agendaContentBottom: CGFloat = 46
         private var agendaRow: Int?
         private var agendaLayout: CalendarDayAgendaLayout?
         private var updating = false
@@ -170,7 +171,18 @@ struct CalendarTimelineView: NSViewRepresentable {
             let agendaContentChanged = agendaLayout !== nextLayout
             agendaLayout = nextLayout
             let agendaSelectionChanged = agenda != nextAgenda
+            var nextContentBottom = agendaContentBottom
+            if agendaSelectionChanged || rebuilt || resized || eventRevision != model.events.revision {
+                if let nextAgenda {
+                    let nextTimeline = rebuilt ? model.calendarTimeline(firstWeekday: firstWeekday) : timeline
+                    let row = nextTimeline.weekRow(containing: nextAgenda.date, inMonth: nextAgenda.month)
+                    let start = nextTimeline.rows[row].date
+                    let dates = (0..<7).map { model.engine.addingDays($0, to: start) }
+                    nextContentBottom = CalendarWeekView.contentBottom(dates: dates, model: model)
+                } else { nextContentBottom = 46 }
+            }
             let agendaChanged = agendaSelectionChanged || agendaHeight != nextHeight
+                || agendaContentBottom != nextContentBottom
             // 跨月查询会补回原日期详情并改变高度，不能因此取消正在执行的导航。
             let continuingNavigation = navigating && !requestedNavigation && !rebuilt && !resized
                 && !agendaSelectionChanged
@@ -178,6 +190,7 @@ struct CalendarTimelineView: NSViewRepresentable {
             if (resized || agendaChanged) && !requestedNavigation { recordViewport() }
             agenda = nextAgenda
             agendaHeight = nextHeight
+            agendaContentBottom = nextContentBottom
             let changed = self.options != options || today != model.today || selection != model.selection
                 || holidayRevision != model.holidayRevision || eventRevision != model.events.revision || resized || agendaChanged || agendaContentChanged
             self.options = options
@@ -469,16 +482,21 @@ struct CalendarTimelineView: NSViewRepresentable {
             #endif
             switch timeline.rows[row] {
             case .month: return 30
-            case .week(_, let month):
-                // 整月和自由浏览共享行高，吸附与中断只移动视口，不重排日期。
-                let weeks = timeline.weekRows(inMonth: month)!
-                let scale = tableView.window?.backingScaleFactor ?? 2
-                let unit = eventMode.viewportHeight * scale / CGFloat(weeks.count)
-                let index = CGFloat(row - weeks.lowerBound)
-                let extra = agendaRow == row ? agendaHeight : 0
-                return (floor((index + 1) * unit) - floor(index * unit)) / scale + extra
+            case .week:
+                let base = baseWeekHeight(row, in: tableView)
+                guard agendaRow == row else { return base }
+                let dateTop = (base - 46 - eventMode.extraRowHeight) / 2
+                return dateTop + agendaContentBottom + 4 + agendaHeight
             }
         }
+        private func baseWeekHeight(_ row: Int, in tableView: NSTableView) -> CGFloat {
+            let weeks = timeline.weekRows(inMonth: timeline.rows[row].sectionMonth)!
+            let scale = tableView.window?.backingScaleFactor ?? 2
+            let unit = eventMode.viewportHeight * scale / CGFloat(weeks.count)
+            let index = CGFloat(row - weeks.lowerBound)
+            return (floor((index + 1) * unit) - floor(index * unit)) / scale
+        }
+
         func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
 
         func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -518,7 +536,8 @@ struct CalendarTimelineView: NSViewRepresentable {
                 if days.count >= 128 { days.removeAll(keepingCapacity: true) }
                 days[start] = values
             }
-            view.configure(days: values, sectionMonth: sectionMonth, model: model, options: options)
+            view.configure(days: values, sectionMonth: sectionMonth, model: model, options: options,
+                           baseHeight: baseWeekHeight(row, in: table!), contentBottom: agendaContentBottom)
         }
     }
 }
@@ -545,6 +564,8 @@ final class CalendarWeekView: NSView {
     private let buttons = (0..<7).map { _ in CalendarDayButton(frame: .zero) }
     let agendaView = CalendarDayAgendaView(frame: .zero)
     private var agendaHeight: CGFloat = 0
+    private var baseHeight: CGFloat = 0
+    private var contentBottom: CGFloat = 46
     override var isFlipped: Bool { true }
 
     override init(frame: NSRect) {
@@ -555,16 +576,31 @@ final class CalendarWeekView: NSView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func configure(days: [DayInfo], sectionMonth: Date, model: CalendarModel, options: CalendarContentOptions) {
+    // 与实际标记共用绘制几何，跨日分行和溢出计数也参与整周占用高度。
+    static func contentBottom(dates: [Date], model: CalendarModel) -> CGFloat {
+        let mode = model.events.mode
+        let layout = CalendarEventWeekLayout(dates: dates, days: model.events.days, engine: model.engine)
+        let visible = layout.visibleSegments(limit: mode == .detailed ? 2 : 3, reservingOverflow: mode == .detailed)
+        return dates.enumerated().reduce(CGFloat(46)) { bottom, pair in
+            let (column, date) = pair
+            let segments = visible.filter { $0.columns.contains(column) }
+            let overflow = layout.segments.filter { $0.columns.contains(column) }.count - segments.count
+            let markers = CalendarEventDrawing.markers(events: model.events.days[date] ?? [], mode: mode,
+                width: 40, muted: false, dark: false, segments: segments, column: column, overflow: overflow)
+            return max(bottom, markers.map { $0.style.frame.maxY }.max() ?? 0)
+        }
+    }
+
+    func configure(days: [DayInfo], sectionMonth: Date, model: CalendarModel, options: CalendarContentOptions,
+                   baseHeight: CGFloat, contentBottom: CGFloat) {
+        self.baseHeight = baseHeight
+        self.contentBottom = contentBottom
         let mode = model.events.mode
         if let agenda = model.agenda, agenda.month == sectionMonth,
            days.contains(where: { $0.date == agenda.date }), let value = model.agendaLayout {
             agendaHeight = value.height
             agendaView.isHidden = false
-            agendaView.configure(selection: agenda, layout: value, engine: model.engine) { [weak model] in model?.closeAgenda() }
-            if let index = days.firstIndex(where: { $0.date == agenda.date }) {
-                agendaView.pointerX = (CGFloat(index) + 0.5) * (296 / 7)
-            }
+            agendaView.configure(selection: agenda, layout: value, engine: model.engine)
         } else {
             agendaHeight = 0
             agendaView.isHidden = true
@@ -597,7 +633,9 @@ final class CalendarWeekView: NSView {
         let width = (bounds.width - 2 * inset) / 7
         for (index, button) in buttons.enumerated() {
             let height = 46 + button.eventMode.extraRowHeight
-            button.frame = NSRect(x: inset + CGFloat(index) * width, y: (bounds.height - agendaHeight - height) / 2, width: width, height: height)
+            // 展开时裁去日期格底部空白，避免动画快照把详情重复裁入日期底图。
+            button.frame = NSRect(x: inset + CGFloat(index) * width, y: (baseHeight - height) / 2,
+                                  width: width, height: agendaView.isHidden ? height : contentBottom)
         }
         agendaView.frame = NSRect(x: inset, y: bounds.height - agendaHeight, width: bounds.width - 2 * inset, height: agendaHeight)
     }

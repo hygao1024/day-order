@@ -11,14 +11,15 @@ struct CalendarAgendaSelection: Equatable {
     static var measurements = 0
     #endif
     static let bodyLimit: CGFloat = 132
-    static let maximumHeight: CGFloat = 32 + bodyLimit + 22 + 8
+    static let topInset: CGFloat = 12
+    static let maximumHeight: CGFloat = topInset + bodyLimit + 22 + 8
     static let titleWidth: CGFloat = 176
     let events: [CalendarEvent]
     let rowHeights: [CGFloat]
     let message: String?
     var contentHeight: CGFloat { rowHeights.reduce(0, +) }
     var bodyHeight: CGFloat { events.isEmpty ? 38 : min(Self.bodyLimit, contentHeight) }
-    var height: CGFloat { 32 + bodyHeight + (contentHeight > bodyHeight ? 22 : 8) + 8 }
+    var height: CGFloat { Self.topInset + bodyHeight + (contentHeight > bodyHeight ? 22 : 8) + 8 }
 
     init(events: [CalendarEvent], message: String?) {
         #if DEBUG
@@ -58,28 +59,18 @@ final class CalendarAgendaScrollView: NSScrollView {
 }
 
 final class CalendarDayAgendaView: NSView {
-    let heading = NSTextField(labelWithString: "")
-    let closeButton = NSButton(title: "收起 ⌃", target: nil, action: nil)
     let scroll = CalendarAgendaScrollView()
     let remaining = NSTextField(labelWithString: "")
     private let document = CalendarAgendaDocumentView()
     private var selection: CalendarAgendaSelection?
     private var layoutValue: CalendarDayAgendaLayout?
-    private var close: (() -> Void)?
     var itemCount: Int { layoutValue?.events.count ?? 0 }
-    var pointerX: CGFloat = 0
     override var isFlipped: Bool { true }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         identifier = NSUserInterfaceItemIdentifier("calendarDayAgenda")
         setAccessibilityElement(false)
-        heading.font = .systemFont(ofSize: 11, weight: .semibold)
-        closeButton.font = .systemFont(ofSize: 10)
-        closeButton.isBordered = false
-        closeButton.target = self
-        closeButton.action = #selector(collapse)
-        closeButton.setAccessibilityLabel("收起当天日程")
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
@@ -91,21 +82,20 @@ final class CalendarDayAgendaView: NSView {
         remaining.font = .systemFont(ofSize: 10)
         remaining.textColor = CalendarSurface.secondaryTextColor
         remaining.alignment = .center
-        [heading, closeButton, scroll, remaining].forEach(addSubview)
+        [scroll, remaining].forEach(addSubview)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     deinit { NotificationCenter.default.removeObserver(self) }
 
     func configure(selection: CalendarAgendaSelection, layout: CalendarDayAgendaLayout,
-                   engine: CalendarEngine, close: @escaping () -> Void) {
+                   engine: CalendarEngine) {
         let changedDay = self.selection != selection
         let changedContent = layoutValue !== layout
-        self.close = close
         guard changedDay || changedContent else { return }
         self.selection = selection
         self.layoutValue = layout
         let day = engine.info(for: selection.date)
-        heading.stringValue = "\(day.month)月\(day.day)日 · \(layout.events.count)项日程"
+        scroll.setAccessibilityLabel("\(day.month)月\(day.day)日 · \(layout.events.count)项日程")
         document.configure(layout: layout, date: selection.date, engine: engine)
         if changedDay { scroll.contentView.scroll(to: .zero) }
         needsLayout = true
@@ -116,28 +106,23 @@ final class CalendarDayAgendaView: NSView {
         guard selection != nil else { return }
         selection = nil
         layoutValue = nil
-        close = nil
-        heading.stringValue = ""
+        scroll.setAccessibilityLabel(nil)
         remaining.stringValue = ""
         document.clear()
         document.frame = .zero
         scroll.contentView.scroll(to: .zero)
     }
 
-    @objc private func collapse() { close?() }
-
     override func layout() {
         super.layout()
         guard let value = layoutValue else { return }
-        heading.frame = NSRect(x: 10, y: 10, width: bounds.width - 64, height: 17)
-        closeButton.frame = NSRect(x: bounds.width - 52, y: 6, width: 44, height: 24)
-        scroll.frame = NSRect(x: 10, y: 32, width: bounds.width - 20, height: value.bodyHeight)
+        scroll.frame = NSRect(x: 10, y: CalendarDayAgendaLayout.topInset, width: bounds.width - 20, height: value.bodyHeight)
         document.frame = NSRect(x: 0, y: 0, width: scroll.contentSize.width,
                                 height: max(value.bodyHeight, value.contentHeight))
         document.layoutSubtreeIfNeeded()
         let limit = max(0, document.bounds.height - scroll.contentSize.height)
         if scroll.contentView.bounds.minY > limit { scroll.contentView.scroll(to: NSPoint(x: 0, y: limit)) }
-        remaining.frame = NSRect(x: 10, y: 32 + value.bodyHeight + 2, width: bounds.width - 20, height: 18)
+        remaining.frame = NSRect(x: 10, y: CalendarDayAgendaLayout.topInset + value.bodyHeight + 2, width: bounds.width - 20, height: 18)
         remaining.isHidden = value.contentHeight <= value.bodyHeight
         scroll.reflectScrolledClipView(scroll.contentView)
         updateRemaining()
@@ -157,13 +142,6 @@ final class CalendarDayAgendaView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         NSColor.labelColor.withAlphaComponent(0.045).setFill()
         NSBezierPath(roundedRect: bounds.insetBy(dx: 0, dy: 4), xRadius: 8, yRadius: 8).fill()
-        let x = min(bounds.width - 12, max(12, pointerX))
-        let pointer = NSBezierPath()
-        pointer.move(to: NSPoint(x: x - 5, y: 4))
-        pointer.line(to: NSPoint(x: x, y: 0))
-        pointer.line(to: NSPoint(x: x + 5, y: 4))
-        pointer.close()
-        pointer.fill()
     }
     override func viewDidChangeEffectiveAppearance() { needsDisplay = true }
 }

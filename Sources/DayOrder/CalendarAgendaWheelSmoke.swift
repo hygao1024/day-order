@@ -74,7 +74,7 @@ import DayOrderCore
             }
             for precise in [false, true] {
                 let areas = ["day-2", "day-9", "day-16"] + (count < 12 ? ["day-23"] : [])
-                    + ["heading", "padding", "body", "bottom"]
+                    + ["top", "padding", "body", "bottom"]
                 for area in areas {
                     coordinator.beginInteraction()
                     outer.contentView.scroll(to: origin)
@@ -91,9 +91,9 @@ import DayOrderCore
                     if area.hasPrefix("day-") {
                         view = try button(Int(area.dropFirst(4))!)
                         local = NSPoint(x: view.bounds.midX, y: view.bounds.midY)
-                    } else if area == "heading" {
-                        view = agenda.heading
-                        local = NSPoint(x: view.bounds.midX, y: view.bounds.midY)
+                    } else if area == "top" {
+                        view = agenda
+                        local = NSPoint(x: view.bounds.midX, y: 6)
                     } else if area == "padding" {
                         view = agenda
                         local = NSPoint(x: 3, y: agenda.bounds.midY)

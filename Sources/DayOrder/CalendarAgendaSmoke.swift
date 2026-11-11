@@ -132,20 +132,22 @@ import DayOrderCore
             let after = presentation.view.convert(try day(13).bounds, from: try day(13))
             try require(abs(before.minY - after.minY) < 0.5,
                         "展开移动了选中日期：\(before) → \(after)\n起点：\(beforeGeometry)\n终点：\(geometry(try day(13)))")
-            try require(view.heading.stringValue.contains("12项日程"), "完整日程数量错误")
+            try require(view.itemCount == 12, "完整日程数量错误")
             try require(view.itemCount == 12 && view.scroll.documentView!.subviews.count < 12, "日程列表被截断")
             try require(view.scroll.contentSize.height <= CalendarDayAgendaLayout.bodyLimit + 1, "列表没有限制高度")
             try requireFixedWindow()
-            try require(abs(table.rect(ofRow: selectedRow + 1).minY - table.rect(ofRow: selectedRow).minY
-                            - nextWeekOffset - expandedHeight) < 0.5, "后续周行没有为日程向下让出空间")
+            let addedHeight = table.rect(ofRow: selectedRow + 1).minY - table.rect(ofRow: selectedRow).minY - nextWeekOffset
+            try require(addedHeight > 0 && addedHeight <= expandedHeight
+                        && abs(view.frame.maxY - view.superview!.bounds.height) < 0.5,
+                        "后续周行没有按日程净新增高度下移，或卡片下方残留空白")
             let outer = try day(13).enclosingScrollView!
             let outerOrigin = outer.contentView.bounds.origin
-            let fixedHeader = presentation.view.convert(view.heading.bounds, from: view.heading)
+            let fixedRemaining = presentation.view.convert(view.remaining.bounds, from: view.remaining)
             let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: -180, wheel2: 0, wheel3: 0)!
             view.scroll.scrollWheel(with: NSEvent(cgEvent: event)!)
             try require(view.scroll.contentView.bounds.minY > 0 && outer.contentView.bounds.origin == outerOrigin,
                         "内层滚动带动了月份或没有滚动")
-            try require(presentation.view.convert(view.heading.bounds, from: view.heading) == fixedHeader, "滚动移动了固定标题")
+            try require(presentation.view.convert(view.remaining.bounds, from: view.remaining) == fixedRemaining, "滚动移动了剩余数量提示")
             try save(presentation.view, "agenda-\(appearance)-scrolled")
             let end = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: -10000, wheel2: 0, wheel3: 0)!
             view.scroll.scrollWheel(with: NSEvent(cgEvent: end)!)
@@ -156,15 +158,15 @@ import DayOrderCore
             try save(presentation.view, "agenda-\(appearance)-expanded")
             try click(14)
             try await finish()
-            try require(try agenda().heading.stringValue.contains("14日 · 1项"), "展开后没有跟随新日期")
+            try require(try agenda().scroll.accessibilityLabel() == "10月14日 · 1项日程", "展开后没有跟随新日期")
             try require(try agenda().scroll.contentView.bounds.minY == 0, "切日沿用了旧滚动位置")
             try require(try agenda().bounds.height < expandedHeight, "少量日程没有自适应高度")
             try click(15)
             try await finish()
             try require(descendants(try agenda()).compactMap { $0 as? NSTextField }.contains { $0.stringValue == "当天暂无日程" }, "空日程缺少明确状态")
-            try agenda().closeButton.performClick(nil)
+            try click(15)
             try await finish()
-            try require(model.agenda == nil, "收起按钮无效")
+            try require(model.agenda == nil, "再次点击空日程日期未收起")
             try click(13)
             try click(13)
             try await finish()
@@ -177,6 +179,59 @@ import DayOrderCore
             report.append(["appearance": appearance, "dateYError": abs(before.minY - after.minY), "items": 12])
             try click(14)
         }
+        // 整周的实际标记决定留白，所选日为空也必须给同周其他日及跨日段留空间。
+        var spacingReport: [[String: Any]] = []
+        let single = values[1]
+        let otherDay = values.last!
+        let span = CalendarEvent(id: "spacing-span", title: "跨日安排", start: start(12, 0), end: start(15, 0),
+            allDay: true, color: single.color)
+        let scenarios: [(String, [CalendarEvent], CGFloat)] = [
+            ("empty", [], 46), ("one", [single, otherDay], 61),
+            ("two-other-day", [otherDay, CalendarEvent(id: "second", title: "另一项安排",
+                start: start(14, 12), end: start(14, 13), allDay: false, color: single.color)], 75),
+            ("overflow", Array(values.prefix(3)), 75), ("span", [span, otherDay], 75)
+        ]
+        for appearance in ["light", "dark"] {
+            defaults.set(appearance, forKey: "appearance")
+            for mode in [CalendarEventDisplay.detailed, .compact, .dots] {
+                model.closeAgenda()
+                model.events.choose(mode)
+                model.select(model.engine.date(2026, 10, 13))
+                try await finish()
+                let button = try day(13)
+                let dateTop = button.frame.minY
+                let windowFrame = presentation.view.window!.frame
+                try click(13)
+                try await finish()
+                for (name, events, detailedBottom) in scenarios {
+                    await source.configure(access: .fullAccess, values: events)
+                    model.events.update(month: model.month, engine: model.engine)
+                    try await finish()
+                    let view = try agenda()
+                    let week = view.superview!
+                    let buttons = week.subviews.compactMap { $0 as? CalendarDayButton }
+                    let markerBottom = buttons.flatMap(\.eventMarkers).map { $0.style.frame.maxY }.max() ?? 0
+                    let bottom = max(46, markerBottom)
+                    let gap = view.frame.minY - dateTop - bottom
+                    try require(abs(gap - 4) < 0.5, "详情与整周内容间距错误：\(appearance)/\(mode)/\(name)，\(gap)")
+                    if mode == .detailed {
+                        try require(abs(bottom - detailedBottom) < 0.5, "间距场景未覆盖预期标记行数：\(name)")
+                    }
+                    try require(buttons.allSatisfy { abs($0.frame.minY - dateTop) < 0.5 && $0.frame.maxY <= view.frame.minY }
+                                && presentation.view.window!.frame == windowFrame,
+                                "收紧间距移动日期、覆盖标记或改变窗口大小")
+                    try require(abs(view.frame.maxY - week.bounds.height) < 0.5, "空白被搬到了详情下方")
+                    spacingReport.append(["appearance": appearance, "mode": String(describing: mode),
+                                          "scenario": name, "gap": gap, "contentBottom": bottom])
+                    if mode == .detailed { try save(presentation.view, "agenda-spacing-\(appearance)-\(name)") }
+                }
+            }
+        }
+        try JSONSerialization.data(withJSONObject: spacingReport, options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("agenda-spacing.json"))
+        model.closeAgenda()
+        model.events.choose(.detailed)
+        try await finish()
         // 自由浏览时，展开后完全离开视口的周行也必须平移，不能当成删除元素淡出。
         testMonth = 12
         defaults.set(1, forKey: "firstWeekday")
@@ -197,7 +252,7 @@ import DayOrderCore
         for appearance in ["light", "dark"] {
             defaults.set(appearance, forKey: "appearance")
             edgeScroll.onActivity?()
-            edgeScroll.contentView.scroll(to: NSPoint(x: 0, y: edgeTable.rect(ofRow: firstRow).minY - 123))
+            edgeScroll.contentView.scroll(to: NSPoint(x: 0, y: edgeTable.rect(ofRow: firstRow).minY - 150))
             edgeScroll.reflectScrolledClipView(edgeScroll.contentView)
             try await Task.sleep(for: .milliseconds(100))
             presentation.view.display()
@@ -265,14 +320,14 @@ import DayOrderCore
             presentation.view.display()
             try require(view.visibleRect.height >= view.bounds.height - 1, "滚动日历后仍无法查看完整月末日程")
             try require(presentation.view.window!.frame == windowFrame, "滚动查看日程改变了窗口大小")
-            try require(view.heading.stringValue.contains("1项日程"), "月末查询或日程归属错误")
+            try require(view.itemCount == 1, "月末查询或日程归属错误")
             try save(presentation.view, "agenda-last-week-\(month)")
             model.openYearOverview()
             try await finish()
             try require(model.agenda?.date == date, "进入年概览丢失展开状态")
             model.dismissYearLevel()
             try await finish()
-            try require(try agenda().heading.stringValue.contains("\(number)日 · 1项日程"), "年概览返回未恢复原详情")
+            try require(try agenda().scroll.accessibilityLabel() == "\(month)月\(number)日 · 1项日程", "年概览返回未恢复原详情")
         }
         testMonth = 10
         model.select(model.engine.date(2026, 10, 14))
@@ -333,24 +388,24 @@ import DayOrderCore
         try click(13)
         try click(13)
         try await finish()
-        try require(try agenda().heading.stringValue.contains("12项日程"), "快速反向丢失最终展开状态")
+        try require(try agenda().itemCount == 12, "快速反向丢失最终展开状态")
         await source.configure(access: .fullAccess, values: Array(values.prefix(2)))
         model.events.update(month: model.month, engine: model.engine)
         try await finish()
-        try require(try agenda().heading.stringValue.contains("2项日程")
+        try require(try agenda().itemCount == 2
                     && agenda().scroll.documentView?.subviews.count == 2, "展开列表没有刷新删除后的日程")
         model.showingSettings = true
         try await finish()
         try require(model.agenda?.date == model.selection, "进入设置丢失展开状态")
         model.showingSettings = false
         try await finish()
-        try require(try agenda().heading.stringValue.contains("13日 · 2项日程"), "设置返回未恢复原详情")
+        try require(try agenda().scroll.accessibilityLabel() == "10月13日 · 2项日程", "设置返回未恢复原详情")
         model.closeAgenda()
         try await finish()
         presentation.reduceMotionOverride = true
         try click(13)
         try await finish()
-        try require(try agenda().heading.stringValue.contains("2项日程"), "减少动态效果没有展示详情")
+        try require(try agenda().itemCount == 2, "减少动态效果没有展示详情")
         guard let window = presentation.view.window,
               let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
                   timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
