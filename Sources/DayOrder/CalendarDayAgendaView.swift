@@ -27,13 +27,7 @@ struct CalendarAgendaSelection: Equatable {
         #endif
         self.events = events
         self.message = message
-        rowHeights = events.map { event in
-            let title = (event.title as NSString).boundingRect(
-                with: NSSize(width: Self.titleWidth - 4, height: .greatestFiniteMagnitude),
-                options: [.usesLineFragmentOrigin, .usesFontLeading],
-                attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium)])
-            return max(40, ceil(title.height) + 30)
-        }
+        rowHeights = Array(repeating: 44, count: events.count)
     }
 }
 
@@ -197,7 +191,8 @@ private final class CalendarAgendaDocumentView: NSView {
             let row: CalendarAgendaEventView
             if let existing = rows[index] { row = existing }
             else {
-                row = CalendarAgendaEventView(event: value.events[index], date: date, engine: engine)
+                row = CalendarAgendaEventView(event: value.events[index], date: date, engine: engine,
+                                              showsSeparator: index < value.events.count - 1)
                 rows[index] = row
                 addSubview(row)
             }
@@ -214,22 +209,25 @@ private final class CalendarAgendaDocumentView: NSView {
 
 private final class CalendarAgendaEventView: NSView {
     private let event: CalendarEvent
+    private let showsSeparator: Bool
     private let time = NSTextField(labelWithString: "")
-    private let title = NSTextField(wrappingLabelWithString: "")
+    private let title = CalendarAgendaTitleField(labelWithString: "")
     private let calendar = NSTextField(labelWithString: "")
     override var isFlipped: Bool { true }
 
-    init(event: CalendarEvent, date: Date, engine: CalendarEngine) {
+    init(event: CalendarEvent, date: Date, engine: CalendarEngine, showsSeparator: Bool) {
+        self.showsSeparator = showsSeparator
         self.event = event
         super.init(frame: .zero)
         title.stringValue = event.title
         title.font = .systemFont(ofSize: 11, weight: .medium)
         title.isSelectable = true
-        title.maximumNumberOfLines = 0
-        title.cell?.usesSingleLineMode = false
-        title.cell?.wraps = true
+        title.toolTip = event.title
+        title.maximumNumberOfLines = 1
+        title.cell?.usesSingleLineMode = true
+        title.cell?.wraps = false
         title.cell?.isScrollable = false
-        title.lineBreakMode = .byWordWrapping
+        title.lineBreakMode = .byClipping
         calendar.stringValue = event.calendarTitle.isEmpty ? "系统日历" : event.calendarTitle
         calendar.font = .systemFont(ofSize: 10)
         calendar.textColor = CalendarSurface.secondaryTextColor
@@ -260,14 +258,33 @@ private final class CalendarAgendaEventView: NSView {
     override func layout() {
         super.layout()
         time.frame = NSRect(x: 10, y: 10, width: 72, height: 16)
-        title.frame = NSRect(x: 88, y: 7, width: CalendarDayAgendaLayout.titleWidth, height: bounds.height - 26)
+        title.frame = NSRect(x: 88, y: 7, width: CalendarDayAgendaLayout.titleWidth, height: 16)
         calendar.frame = NSRect(x: 88, y: bounds.height - 17, width: CalendarDayAgendaLayout.titleWidth, height: 14)
     }
     override func draw(_ dirtyRect: NSRect) {
         let color = NSColor(srgbRed: event.color.red, green: event.color.green, blue: event.color.blue, alpha: 1)
         color.setFill()
         NSBezierPath(roundedRect: NSRect(x: 1, y: 10, width: 3, height: 15), xRadius: 1.5, yRadius: 1.5).fill()
-        NSColor.separatorColor.setFill()
-        NSRect(x: 1, y: bounds.height - 0.5, width: bounds.width - 10, height: 0.5).fill()
+        if showsSeparator {
+            NSColor.separatorColor.setFill()
+            NSRect(x: 1, y: bounds.height - 0.5, width: bounds.width - 10, height: 0.5).fill()
+        }
+    }
+}
+
+private final class CalendarAgendaTitleField: NSTextField {
+    override func draw(_ dirtyRect: NSRect) {
+        let text = NSAttributedString(string: stringValue.components(separatedBy: .newlines).joined(separator: " "),
+            attributes: [.font: font ?? NSFont.systemFont(ofSize: 11, weight: .medium),
+                         .foregroundColor: textColor ?? NSColor.labelColor])
+        let rect = bounds.insetBy(dx: 2, dy: 0)
+        guard text.size().width > rect.width,
+              let cg = NSGraphicsContext.current?.cgContext else { super.draw(dirtyRect); return }
+        let scale = max(2, hypot(cg.ctm.a, cg.ctm.b), hypot(cg.ctm.c, cg.ctm.d))
+        guard let image = CalendarEventDrawing.fadedTitle(text, size: rect.size, scale: scale, fadeWidth: 14) else {
+            super.draw(dirtyRect)
+            return
+        }
+        image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
     }
 }

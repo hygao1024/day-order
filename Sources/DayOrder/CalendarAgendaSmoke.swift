@@ -179,6 +179,77 @@ import DayOrderCore
             report.append(["appearance": appearance, "dateYError": abs(before.minY - after.minY), "items": 12])
             try click(14)
         }
+        var rowReport: [[String: Any]] = []
+        for appearance in ["light", "dark"] {
+            defaults.set(appearance, forKey: "appearance")
+            model.closeAgenda()
+            model.select(model.engine.date(2026, 10, 13))
+            try await finish()
+            try click(13)
+            try await finish()
+            for count in 1...3 {
+                let events = values.prefix(count).enumerated().map { index, event in
+                    CalendarEvent(id: event.id, title: index == 0 ? "小孟同学’s 第28 Chinese Birthday" : event.title,
+                        start: event.start, end: event.end, allDay: event.allDay, color: event.color,
+                        calendarTitle: event.calendarTitle)
+                }
+                await source.configure(access: .fullAccess, values: events)
+                model.events.update(month: model.month, engine: model.engine)
+                try await finish()
+                let view = try agenda()
+                let rows = view.scroll.documentView!.subviews.sorted { $0.frame.minY < $1.frame.minY }
+                try require(rows.count == count && Set(rows.map { $0.bounds.height }).count == 1,
+                            "单行日程没有采用一致行高")
+                guard let title = descendants(rows[0]).compactMap({ $0 as? NSTextField })
+                    .first(where: { $0.stringValue == events[0].title }),
+                      let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { throw CocoaError(.coderInvalidValue) }
+                try require(title.maximumNumberOfLines == 1 && title.bounds.height <= 16
+                            && title.toolTip == events[0].title, "长标题仍换行或丢失完整标题")
+                try save(presentation.view, "agenda-rows-\(appearance)-\(count)")
+                view.cacheDisplay(in: view.bounds, to: bitmap)
+                let scaleX = CGFloat(bitmap.pixelsWide) / view.bounds.width
+                let scaleY = CGFloat(bitmap.pixelsHigh) / view.bounds.height
+                func color(_ point: NSPoint) throws -> NSColor {
+                    guard let color = bitmap.colorAt(x: Int(point.x * scaleX), y: Int(point.y * scaleY))?
+                        .usingColorSpace(.deviceRGB) else { throw CocoaError(.coderInvalidValue) }
+                    return color
+                }
+                var separators = 0
+                for (index, row) in rows.enumerated() {
+                    let frame = view.convert(row.bounds, from: row)
+                    let bottom = try color(NSPoint(x: frame.minX + 20, y: frame.maxY - 0.25))
+                    let above = try color(NSPoint(x: frame.minX + 20, y: frame.maxY - 2))
+                    let difference = abs(bottom.redComponent - above.redComponent)
+                        + abs(bottom.greenComponent - above.greenComponent) + abs(bottom.blueComponent - above.blueComponent)
+                        + abs(bottom.alphaComponent - above.alphaComponent)
+                    let hasLine = difference > 0.03
+                    try require(hasLine == (index < count - 1), "日程分隔线位置错误：\(appearance)，\(count)项，第\(index + 1)项，色差=\(difference)")
+                    if hasLine { separators += 1 }
+                }
+                rowReport.append(["appearance": appearance, "count": count, "separators": separators])
+            }
+            let probe = CalendarEvent(id: "fade-probe", title: String(repeating: "█", count: 40),
+                start: values[0].start, end: values[0].end, allDay: true, color: values[0].color)
+            await source.configure(access: .fullAccess, values: [probe])
+            model.events.update(month: model.month, engine: model.engine)
+            try await finish()
+            guard let field = descendants(try agenda()).compactMap({ $0 as? NSTextField })
+                .first(where: { $0.stringValue == probe.title }),
+                  let bitmap = field.bitmapImageRepForCachingDisplay(in: field.bounds) else { throw CocoaError(.coderInvalidValue) }
+            field.cacheDisplay(in: field.bounds, to: bitmap)
+            let scale = CGFloat(bitmap.pixelsWide) / field.bounds.width
+            func peakAlpha(x: CGFloat) -> CGFloat {
+                (bitmap.pixelsHigh / 3..<bitmap.pixelsHigh * 2 / 3).map {
+                    bitmap.colorAt(x: Int(x * scale), y: $0)?.alphaComponent ?? 0
+                }.max() ?? 0
+            }
+            let solid = peakAlpha(x: field.bounds.maxX - 22)
+            let tail = peakAlpha(x: field.bounds.maxX - 3)
+            try require(solid > 0.5 && tail < solid * 0.3, "长标题右端未渐隐：\(appearance)，正文=\(solid)，尾部=\(tail)")
+            rowReport.append(["appearance": appearance, "solidAlpha": solid, "tailAlpha": tail])
+        }
+        try JSONSerialization.data(withJSONObject: rowReport, options: [.prettyPrinted, .sortedKeys])
+            .write(to: directory.appendingPathComponent("agenda-rows.json"))
         // 整周的实际标记决定留白，所选日为空也必须给同周其他日及跨日段留空间。
         var spacingReport: [[String: Any]] = []
         let single = values[1]
@@ -213,11 +284,12 @@ import DayOrderCore
                     let markerBottom = buttons.flatMap(\.eventMarkers).map { $0.style.frame.maxY }.max() ?? 0
                     let bottom = max(46, markerBottom)
                     let gap = view.frame.minY - dateTop - bottom
-                    try require(abs(gap - 4) < 0.5, "详情与整周内容间距错误：\(appearance)/\(mode)/\(name)，\(gap)")
+                    let pixel = 1 / (view.window?.backingScaleFactor ?? 2)
+                    try require(abs(gap - 4) <= pixel + 0.001, "详情与整周内容间距错误：\(appearance)/\(mode)/\(name)，\(gap)")
                     if mode == .detailed {
                         try require(abs(bottom - detailedBottom) < 0.5, "间距场景未覆盖预期标记行数：\(name)")
                     }
-                    try require(buttons.allSatisfy { abs($0.frame.minY - dateTop) < 0.5 && $0.frame.maxY <= view.frame.minY }
+                    try require(buttons.allSatisfy { abs($0.frame.minY - dateTop) <= pixel + 0.001 && $0.frame.maxY <= view.frame.minY }
                                 && presentation.view.window!.frame == windowFrame,
                                 "收紧间距移动日期、覆盖标记或改变窗口大小")
                     try require(abs(view.frame.maxY - week.bounds.height) < 0.5, "空白被搬到了详情下方")

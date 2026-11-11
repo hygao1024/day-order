@@ -219,14 +219,14 @@ struct CalendarEventMarker {
         }
     }
 
-    private static func fadedTitle(_ text: NSAttributedString, size: CGSize, scale: CGFloat) -> NSImage? {
+    static func fadedTitle(_ text: NSAttributedString, size: CGSize, scale: CGFloat, fadeWidth: CGFloat = 5) -> NSImage? {
         guard let fade = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
             colors: [NSColor.black.cgColor, NSColor.clear.cgColor] as CFArray, locations: [0, 1]) else { return nil }
         return rasterizedDetail(size: size, scale: scale) { cg in
             text.draw(at: CGPoint(x: 0, y: (size.height - text.size().height) / 2))
             // PDF 快照无法保留 destinationIn 遮罩；先在透明位图内完成渐隐，再交给画布合成。
             cg.setBlendMode(.destinationIn)
-            cg.drawLinearGradient(fade, start: CGPoint(x: size.width - 5, y: 0),
+            cg.drawLinearGradient(fade, start: CGPoint(x: size.width - fadeWidth, y: 0),
                                   end: CGPoint(x: size.width, y: 0), options: [.drawsBeforeStartLocation])
         }
     }
