@@ -726,7 +726,8 @@ final class CalendarDayButton: NSButton, CalendarZoomParticipant {
         let highlightedToday = today && isInMonth
         let muted = CalendarSurface.adjacentTextColor
         if (selected && !highlightedToday) || isHighlighted {
-            NSColor.labelColor.withAlphaComponent(isHighlighted ? 0.09 : 0.06).setFill()
+            let background = isHighlighted ? NSColor.labelColor.withAlphaComponent(0.09) : CalendarSurface.selectionBackgroundColor
+            background.setFill()
             feedbackPath.fill()
         }
         let circle = dayNumberFrame

@@ -2,6 +2,8 @@ import AppKit
 import SwiftUI
 
 enum CalendarSurface {
+    static var selectionBackgroundColor: NSColor { .labelColor.withAlphaComponent(0.06) }
+
     static let secondaryTextColor = NSColor(name: nil) { appearance in
         NSColor(white: appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? 0.96 : 0.34, alpha: 1)
     }

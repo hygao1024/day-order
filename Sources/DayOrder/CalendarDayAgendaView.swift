@@ -134,8 +134,10 @@ final class CalendarDayAgendaView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.labelColor.withAlphaComponent(0.045).setFill()
-        NSBezierPath(roundedRect: bounds.insetBy(dx: 0, dy: 4), xRadius: 8, yRadius: 8).fill()
+        // 背景边缘与日期选中底的 0.5 pt 留白对齐。
+        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 4), xRadius: 8, yRadius: 8)
+        CalendarSurface.selectionBackgroundColor.setFill()
+        shape.fill()
     }
     override func viewDidChangeEffectiveAppearance() { needsDisplay = true }
 }
