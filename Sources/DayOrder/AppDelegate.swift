@@ -285,6 +285,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         source: source, directory: directory,
                         close: { self.panel.close() }, reopen: { self.showPanel() })
                 }
+                try await CalendarFirstWeekSmoke.verify(model: model, presentation: presentation, source: source,
+                    defaults: defaults, directory: directory) { view, name in
+                    try self.saveViewSnapshot(view, name: name, to: directory)
+                }
                 try await CalendarAgendaSmoke.verify(model: model, presentation: presentation, source: source,
                     defaults: defaults, directory: directory) { view, name in
                     try self.saveViewSnapshot(view, name: name, to: directory)

@@ -483,18 +483,24 @@ struct CalendarTimelineView: NSViewRepresentable {
             switch timeline.rows[row] {
             case .month: return 30
             case .week:
-                let base = baseWeekHeight(row, in: tableView)
-                guard agendaRow == row else { return base }
-                let dateTop = (base - 46 - eventMode.extraRowHeight) / 2
-                return dateTop + agendaContentBottom + 4 + agendaHeight
+                let layout = weekLayout(row, in: tableView)
+                guard agendaRow == row else { return layout.height }
+                return layout.dateTop + agendaContentBottom + 4 + agendaHeight
             }
         }
-        private func baseWeekHeight(_ row: Int, in tableView: NSTableView) -> CGFloat {
+        private func weekLayout(_ row: Int, in tableView: NSTableView) -> (height: CGFloat, dateTop: CGFloat) {
             let weeks = timeline.weekRows(inMonth: timeline.rows[row].sectionMonth)!
             let scale = tableView.window?.backingScaleFactor ?? 2
-            let unit = eventMode.viewportHeight * scale / CGFloat(weeks.count)
-            let index = CGFloat(row - weeks.lowerBound)
-            return (floor((index + 1) * unit) - floor(index * unit)) / scale
+            let contentHeight = CalendarDayButton.feedbackHeight + eventMode.extraRowHeight
+            let firstTop = CalendarTimelineView.contentInset
+            let total = eventMode.viewportHeight * scale
+            // 六周月份为首周顶部留白腾出空间，日期与标记仍完整位于分隔线上方。
+            let first = max(floor(total / CGFloat(weeks.count)), ceil((firstTop + contentHeight + 0.5) * scale))
+            if row == weeks.lowerBound { return (first / scale, firstTop) }
+            let unit = (total - first) / CGFloat(weeks.count - 1)
+            let index = CGFloat(row - weeks.lowerBound - 1)
+            let height = (floor((index + 1) * unit) - floor(index * unit)) / scale
+            return (height, (height - contentHeight) / 2)
         }
 
         func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
@@ -537,7 +543,7 @@ struct CalendarTimelineView: NSViewRepresentable {
                 days[start] = values
             }
             view.configure(days: values, sectionMonth: sectionMonth, model: model, options: options,
-                           baseHeight: baseWeekHeight(row, in: table!), contentBottom: agendaContentBottom)
+                           dateTop: weekLayout(row, in: table!).dateTop, contentBottom: agendaContentBottom)
         }
     }
 }
@@ -564,7 +570,7 @@ final class CalendarWeekView: NSView {
     private let buttons = (0..<7).map { _ in CalendarDayButton(frame: .zero) }
     let agendaView = CalendarDayAgendaView(frame: .zero)
     private var agendaHeight: CGFloat = 0
-    private var baseHeight: CGFloat = 0
+    private var dateTop: CGFloat = 0
     private var contentBottom: CGFloat = 46
     override var isFlipped: Bool { true }
 
@@ -594,8 +600,8 @@ final class CalendarWeekView: NSView {
     }
 
     func configure(days: [DayInfo], sectionMonth: Date, model: CalendarModel, options: CalendarContentOptions,
-                   baseHeight: CGFloat, contentBottom: CGFloat) {
-        self.baseHeight = baseHeight
+                   dateTop: CGFloat, contentBottom: CGFloat) {
+        self.dateTop = dateTop
         self.contentBottom = contentBottom
         let mode = model.events.mode
         if let agenda = model.agenda, agenda.month == sectionMonth,
@@ -635,7 +641,7 @@ final class CalendarWeekView: NSView {
         for (index, button) in buttons.enumerated() {
             let height = 46 + button.eventMode.extraRowHeight
             // 展开时裁去日期格底部空白，避免动画快照把详情重复裁入日期底图。
-            button.frame = NSRect(x: inset + CGFloat(index) * width, y: (baseHeight - height) / 2,
+            button.frame = NSRect(x: inset + CGFloat(index) * width, y: dateTop,
                                   width: width, height: agendaView.isHidden ? height : max(CalendarDayButton.feedbackHeight, contentBottom))
         }
         agendaView.frame = NSRect(x: inset, y: bounds.height - agendaHeight, width: bounds.width - 2 * inset, height: agendaHeight)
