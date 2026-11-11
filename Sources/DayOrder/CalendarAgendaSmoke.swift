@@ -265,7 +265,7 @@ import DayOrderCore
         let span = CalendarEvent(id: "spacing-span", title: "跨日安排", start: start(12, 0), end: start(15, 0),
             allDay: true, color: single.color)
         let scenarios: [(String, [CalendarEvent], CGFloat)] = [
-            ("empty", [], 46), ("one", [single, otherDay], 61),
+            ("empty", [], 45.5), ("one", [single, otherDay], 61),
             ("two-other-day", [otherDay, CalendarEvent(id: "second", title: "另一项安排",
                 start: start(14, 12), end: start(14, 13), allDay: false, color: single.color)], 75),
             ("overflow", Array(values.prefix(3)), 75), ("span", [span, otherDay], 75)
@@ -290,7 +290,7 @@ import DayOrderCore
                     let week = view.superview!
                     let buttons = week.subviews.compactMap { $0 as? CalendarDayButton }
                     let markerBottom = buttons.flatMap(\.eventMarkers).map { $0.style.frame.maxY }.max() ?? 0
-                    let bottom = max(46, markerBottom)
+                    let bottom = max(button.focusRingMaskBounds.maxY, markerBottom)
                     let gap = view.frame.minY - dateTop - bottom
                     let pixel = 1 / (view.window?.backingScaleFactor ?? 2)
                     try require(abs(gap - 4) <= pixel + 0.001, "详情与整周内容间距错误：\(appearance)/\(mode)/\(name)，\(gap)")

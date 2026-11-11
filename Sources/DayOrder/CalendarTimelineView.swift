@@ -581,7 +581,9 @@ final class CalendarWeekView: NSView {
         let mode = model.events.mode
         let layout = CalendarEventWeekLayout(dates: dates, days: model.events.days, engine: model.engine)
         let visible = layout.visibleSegments(limit: mode == .detailed ? 2 : 3, reservingOverflow: mode == .detailed)
-        return dates.enumerated().reduce(CGFloat(46)) { bottom, pair in
+        // 无标记时以选中背景底边定位，保持与可见背景之间的间距。
+        let feedbackBottom = CalendarDayButton.feedbackHeight - CalendarDayButton.feedbackInset
+        return dates.enumerated().reduce(feedbackBottom) { bottom, pair in
             let (column, date) = pair
             let segments = visible.filter { $0.columns.contains(column) }
             let overflow = layout.segments.filter { $0.columns.contains(column) }.count - segments.count
@@ -634,7 +636,7 @@ final class CalendarWeekView: NSView {
             let height = 46 + button.eventMode.extraRowHeight
             // 展开时裁去日期格底部空白，避免动画快照把详情重复裁入日期底图。
             button.frame = NSRect(x: inset + CGFloat(index) * width, y: (baseHeight - height) / 2,
-                                  width: width, height: agendaView.isHidden ? height : contentBottom)
+                                  width: width, height: agendaView.isHidden ? height : max(CalendarDayButton.feedbackHeight, contentBottom))
         }
         agendaView.frame = NSRect(x: inset, y: bounds.height - agendaHeight, width: bounds.width - 2 * inset, height: agendaHeight)
     }
@@ -648,6 +650,8 @@ final class CalendarWeekView: NSView {
 }
 
 final class CalendarDayButton: NSButton, CalendarZoomParticipant {
+    static let feedbackHeight: CGFloat = 46
+    static let feedbackInset: CGFloat = 0.5
     var zoomHiddenDays: Set<Int> = []
     var snapshotHidesEventMarkers = false
     private var day: DayInfo?
@@ -783,7 +787,8 @@ final class CalendarDayButton: NSButton, CalendarZoomParticipant {
     }
     override func viewDidChangeEffectiveAppearance() { needsDisplay = true }
     override var focusRingMaskBounds: NSRect {
-        NSRect(x: 0, y: 0, width: bounds.width, height: 46).insetBy(dx: 0.5, dy: 0.5)
+        NSRect(x: 0, y: 0, width: bounds.width, height: Self.feedbackHeight)
+            .insetBy(dx: Self.feedbackInset, dy: Self.feedbackInset)
     }
     override func drawFocusRingMask() { feedbackPath.fill() }
 }
