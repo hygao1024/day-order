@@ -274,6 +274,8 @@ private final class CalendarAgendaEventView: NSView {
 
 private final class CalendarAgendaTitleField: NSTextField {
     override func draw(_ dirtyRect: NSRect) {
+        // 系统文字选择层拥有激活期间的字形，底层不能再叠绘渐隐标题。
+        guard currentEditor() == nil else { return }
         let text = NSAttributedString(string: stringValue.components(separatedBy: .newlines).joined(separator: " "),
             attributes: [.font: font ?? NSFont.systemFont(ofSize: 11, weight: .medium),
                          .foregroundColor: textColor ?? NSColor.labelColor])

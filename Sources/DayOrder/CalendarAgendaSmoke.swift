@@ -226,6 +226,14 @@ import DayOrderCore
                     try require(hasLine == (index < count - 1), "日程分隔线位置错误：\(appearance)，\(count)项，第\(index + 1)项，色差=\(difference)")
                     if hasLine { separators += 1 }
                 }
+                if count == 2 {
+                    try CalendarAgendaTitleSmoke.verify(title: title, root: presentation.view,
+                        name: "\(appearance)-long", save: save)
+                    guard let shortTitle = descendants(rows[1]).compactMap({ $0 as? NSTextField })
+                        .first(where: { $0.stringValue == events[1].title }) else { throw CocoaError(.coderInvalidValue) }
+                    try CalendarAgendaTitleSmoke.verify(title: shortTitle, root: presentation.view,
+                        name: "\(appearance)-short", save: save)
+                }
                 rowReport.append(["appearance": appearance, "count": count, "separators": separators])
             }
             let probe = CalendarEvent(id: "fade-probe", title: String(repeating: "█", count: 40),

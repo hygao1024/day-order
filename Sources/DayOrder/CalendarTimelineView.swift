@@ -620,7 +620,6 @@ final class CalendarWeekView: NSView {
                 today: model.today, selection: model.selection, enabled: model.engine.isSupported(day.date)) {
                     [weak model] in model?.activateVisibleDay(day.date, in: sectionMonth)
                 }
-            button.agendaExpanded = model.agenda?.date == day.date && !agendaView.isHidden
             button.setAccessibilityHelp(mode == .hidden ? nil : model.agenda?.date == day.date
                 ? "再次点击收起当天日程" : "选中后再次点击展开当天日程")
         }
@@ -651,7 +650,6 @@ final class CalendarWeekView: NSView {
 final class CalendarDayButton: NSButton, CalendarZoomParticipant {
     var zoomHiddenDays: Set<Int> = []
     var snapshotHidesEventMarkers = false
-    var agendaExpanded = false
     private var day: DayInfo?
     private var annotation: Annotation?
     private var holiday: HolidayDay?
@@ -749,16 +747,6 @@ final class CalendarDayButton: NSButton, CalendarZoomParticipant {
             drawText(holiday.badge, rect: NSRect(x: bounds.width - 9, y: 3, width: 9, height: 10),
                      font: .systemFont(ofSize: 8, weight: .medium),
                      color: !isInMonth ? muted : holiday.isOffDay ? Self.accent : CalendarSurface.secondaryTextColor)
-        }
-        if selected, eventMode != .hidden {
-            NSColor.secondaryLabelColor.setStroke()
-            let path = NSBezierPath()
-            path.lineWidth = 0.8
-            let y: CGFloat = agendaExpanded ? 26 : 23
-            path.move(to: NSPoint(x: bounds.width - 7, y: y))
-            path.line(to: NSPoint(x: bounds.width - 5, y: agendaExpanded ? y - 2 : y + 2))
-            path.line(to: NSPoint(x: bounds.width - 3, y: y))
-            path.stroke()
         }
         if !snapshotHidesEventMarkers, eventMode != .hidden, !events.isEmpty {
             NSGraphicsContext.saveGraphicsState()

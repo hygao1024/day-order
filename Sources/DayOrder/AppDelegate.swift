@@ -276,12 +276,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.terminate(nil)
                 return
             }
-            if ProcessInfo.processInfo.arguments.contains("--calendar-agenda-smoke") {
+            let agendaContentOnly = ProcessInfo.processInfo.arguments.contains("--calendar-agenda-content-smoke")
+            if agendaContentOnly || ProcessInfo.processInfo.arguments.contains("--calendar-agenda-smoke") {
                 guard let source = smokeCalendarSource, let presentation = presentationController else { throw CocoaError(.coderInvalidValue) }
                 defaults.set(1, forKey: "firstWeekday")
-                try await CalendarAgendaNavigationSmoke.verify(model: model, presentation: presentation,
-                    source: source, directory: directory,
-                    close: { self.panel.close() }, reopen: { self.showPanel() })
+                if !agendaContentOnly {
+                    try await CalendarAgendaNavigationSmoke.verify(model: model, presentation: presentation,
+                        source: source, directory: directory,
+                        close: { self.panel.close() }, reopen: { self.showPanel() })
+                }
                 try await CalendarAgendaSmoke.verify(model: model, presentation: presentation, source: source,
                     defaults: defaults, directory: directory) { view, name in
                     try self.saveViewSnapshot(view, name: name, to: directory)
