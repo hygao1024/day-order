@@ -6,6 +6,7 @@ import DayOrderCore
     static func verify(model: CalendarModel, presentation: CalendarPresentationController,
                        source: SmokeCalendarSource, defaults: UserDefaults, directory: URL,
                        save: (NSView, String) throws -> Void) async throws {
+        try await CalendarDayFeedbackSmoke.verify(engine: model.engine, directory: directory, save: save)
         func require(_ condition: Bool, _ message: String) throws {
             guard condition else { throw NSError(domain: "DayOrder.Agenda", code: 1,
                 userInfo: [NSLocalizedDescriptionKey: message]) }

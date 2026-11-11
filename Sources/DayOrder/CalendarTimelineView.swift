@@ -652,6 +652,19 @@ final class CalendarWeekView: NSView {
 final class CalendarDayButton: NSButton, CalendarZoomParticipant {
     static let feedbackHeight: CGFloat = 46
     static let feedbackInset: CGFloat = 0.5
+    private var feedbackAlpha: CGFloat?
+    private var feedbackFrom: CGFloat = 0
+    private var feedbackTarget: CGFloat = 0
+    private var feedbackStart: CFTimeInterval = 0
+    private var feedbackDuration: CFTimeInterval = 0
+    private var feedbackPressed = false
+    private var feedbackDisplayLink: CADisplayLink?
+    #if DEBUG
+    var feedbackReduceMotionOverride: Bool?
+    var feedbackSample: CGFloat { feedbackAlpha ?? 0 }
+    var feedbackIsAnimating: Bool { feedbackDisplayLink != nil }
+    private(set) var feedbackFrameCount = 0
+    #endif
     var zoomHiddenDays: Set<Int> = []
     var snapshotHidesEventMarkers = false
     private var day: DayInfo?
@@ -686,11 +699,88 @@ final class CalendarDayButton: NSButton, CalendarZoomParticipant {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    deinit { MainActor.assumeIsolated { feedbackDisplayLink?.invalidate() } }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        resetFeedback()
+    }
+
+    override func viewDidHide() {
+        super.viewDidHide()
+        resetFeedback()
+    }
+
+    private func resetFeedback() {
+        feedbackDisplayLink?.invalidate()
+        feedbackDisplayLink = nil
+        feedbackAlpha = nil
+        feedbackPressed = false
+        needsDisplay = true
+    }
+
+    private func drawFeedback() {
+        let target: CGFloat = isHighlighted ? 0.09
+            : (selected && !(today && isInMonth) ? CalendarSurface.selectionBackgroundColor.alphaComponent : 0)
+        var reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        #if DEBUG
+        reduced = feedbackReduceMotionOverride ?? reduced
+        #endif
+        let now = CACurrentMediaTime()
+        let wasPressed = feedbackPressed
+        feedbackPressed = isHighlighted
+        if feedbackAlpha == nil || reduced || window == nil || isHiddenOrHasHiddenAncestor {
+            feedbackDisplayLink?.invalidate()
+            feedbackDisplayLink = nil
+            feedbackAlpha = target
+            feedbackTarget = target
+        } else if target != feedbackTarget {
+            // 按压反向或松开后的选中状态更新，均从当前已显示颜色接续。
+            feedbackFrom = feedbackAlpha!
+            feedbackTarget = target
+            feedbackStart = now
+            feedbackDuration = isHighlighted ? 0.05 : 0.08
+            if wasPressed || isHighlighted || feedbackDisplayLink != nil {
+                if feedbackDisplayLink == nil {
+                    let driver = CalendarDisplayLinkTarget { [weak self] link in
+                        guard let self else { link.invalidate(); return }
+                        #if DEBUG
+                        self.feedbackFrameCount += 1
+                        #endif
+                        if self.window?.isVisible != true || self.isHiddenOrHasHiddenAncestor || self.visibleRect.isEmpty {
+                            self.resetFeedback()
+                            return
+                        }
+                        self.needsDisplay = true
+                    }
+                    let link = displayLink(target: driver, selector: #selector(CalendarDisplayLinkTarget.tick(_:)))
+                    feedbackDisplayLink = link
+                    link.add(to: .main, forMode: .common)
+                }
+            } else {
+                // 程序化选中和复用不播放按压动画。
+                feedbackAlpha = target
+            }
+        }
+        if feedbackDisplayLink != nil {
+            let progress = min(1, max(0, (now - feedbackStart) / feedbackDuration))
+            let eased = 1 - pow(1 - progress, 3)
+            feedbackAlpha = feedbackFrom + (feedbackTarget - feedbackFrom) * eased
+            if progress == 1 {
+                feedbackDisplayLink?.invalidate()
+                feedbackDisplayLink = nil
+            }
+        }
+        NSColor.labelColor.withAlphaComponent(feedbackAlpha ?? target).setFill()
+        feedbackPath.fill()
+    }
+
     func configure(day: DayInfo, annotations: [Annotation], holiday: HolidayDay?,
                    isInMonth: Bool,
                    events: [CalendarEvent], mode: CalendarEventDisplay,
                    segments: [CalendarEventWeekLayout.Segment], column: Int, overflow: Int,
                    today: Date, selection: Date, enabled: Bool, onSelect: @escaping () -> Void) {
+        if self.day?.date != day.date { resetFeedback() }
         self.day = day
         annotation = annotations.first
         self.holiday = holiday
@@ -729,11 +819,7 @@ final class CalendarDayButton: NSButton, CalendarZoomParticipant {
         guard let day, isEnabled else { return }
         let highlightedToday = today && isInMonth
         let muted = CalendarSurface.adjacentTextColor
-        if (selected && !highlightedToday) || isHighlighted {
-            let background = isHighlighted ? NSColor.labelColor.withAlphaComponent(0.09) : CalendarSurface.selectionBackgroundColor
-            background.setFill()
-            feedbackPath.fill()
-        }
+        drawFeedback()
         let circle = dayNumberFrame
         if !zoomHiddenDays.contains(day.day) {
             if highlightedToday { Self.accent.setFill(); NSBezierPath(ovalIn: circle).fill() }
