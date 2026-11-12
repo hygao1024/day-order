@@ -767,6 +767,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                     let frame = root.convert(icon.bounds, from: icon)
                     try require(icon.mode == mode && frame.minX > 120 && frame.maxX < 210, "模式图标未位于月份和今天之间")
+                    if month == 11 {
+                        try await saveEventModeFeedback(icon, name: "event-mode-\(mode.rawValue)-\(appearance)", to: directory)
+                    }
                     geometry.append(["month": month, "mode": mode.rawValue, "appearance": appearance,
                                      "viewport": height, "weeks": rows.count, "header": presentation.shell!.header.frame.height,
                                      "width": root.bounds.width, "iconX": frame.minX, "spanSeams": seams])
@@ -1191,6 +1194,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.today = today
         model.select(original)
         defaults.set("light", forKey: "appearance")
+    }
+
+    private func saveEventModeFeedback(_ button: CalendarEventModeButton, name: String, to directory: URL) async throws {
+        guard let window = button.window, let screen = NSScreen.screens.first,
+              let cursor = CGEvent(source: nil)?.location else { throw CocoaError(.coderInvalidValue) }
+        defer {
+            button.highlight(false)
+            CGWarpMouseCursorPosition(cursor)
+            button.updateTrackingAreas()
+        }
+        let point = window.convertPoint(toScreen: button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil))
+        CGWarpMouseCursorPosition(CGPoint(x: point.x, y: screen.frame.maxY - point.y))
+        button.updateTrackingAreas()
+        try await saveSnapshot(name + "-hover", to: directory)
+        button.highlight(true)
+        try await saveSnapshot(name + "-pressed", to: directory)
     }
 
     private func saveOverviewMonthFeedback(year: Int, month: Int, name: String, to directory: URL) async throws {

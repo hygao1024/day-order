@@ -18,6 +18,11 @@ struct CalendarEventToggle: NSViewRepresentable {
 
 final class CalendarEventModeButton: NSButton {
     var mode = CalendarEventDisplay.hidden { didSet { needsDisplay = true } }
+    private var hoverArea: NSTrackingArea?
+    private var isHovered: Bool {
+        guard let window, window.isVisible else { return false }
+        return visibleRect.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+    }
     override var isFlipped: Bool { true }
     override var intrinsicContentSize: NSSize { NSSize(width: 24, height: 24) }
 
@@ -34,12 +39,25 @@ final class CalendarEventModeButton: NSButton {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverArea = area
+        needsDisplay = true
+    }
+    override func mouseEntered(with event: NSEvent) { needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { needsDisplay = true }
+    override func viewDidChangeEffectiveAppearance() { needsDisplay = true }
+
     override func draw(_ dirtyRect: NSRect) {
-        if isHighlighted {
-            NSColor.labelColor.withAlphaComponent(0.06).setFill()
+        if isHighlighted || isHovered {
+            NSColor.labelColor.withAlphaComponent(isHighlighted ? 0.10 : 0.06).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
         }
-        NSColor.systemRed.setStroke()
+        NSColor.labelColor.setStroke()
         func outline(_ rect: NSRect, radius: CGFloat) {
             let path = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
             path.lineWidth = 1.5
