@@ -63,6 +63,16 @@ import Foundation
         let originalToday = model.today
         let behavior = panel.behavior
         let appearance = defaults.object(forKey: "appearance")
+        guard let screen = panel.screen else { throw CocoaError(.coderInvalidValue) }
+        let anchorWindow = NSWindow(contentRect: NSRect(x: screen.visibleFrame.midX,
+            y: screen.visibleFrame.maxY - 24, width: 24, height: 24),
+            styleMask: .borderless, backing: .buffered, defer: false, screen: screen)
+        anchorWindow.isReleasedWhenClosed = false
+        let anchor = NSView(frame: NSRect(x: 0, y: 0, width: 24, height: 24))
+        anchorWindow.contentView = anchor
+        // 屏幕坐标断言需要固定锚点，避免系统菜单栏重排带动整个面板移动。
+        panel.show(anchoredTo: anchor)
+        defer { anchorWindow.close() }
         panel.behavior = .applicationDefined
         presentation.reduceMotionOverride = false
         presentation.controlsAnimationClock = true
@@ -132,11 +142,14 @@ import Foundation
                     let actual = panel.convertToScreen(current.header.convert(current.header.bounds, to: nil))
                     headerPositions.append(["phase": headerPhase, "x": actual.minX, "top": actual.maxY,
                         "width": actual.width, "height": actual.height, "calendarHeight": current.calendarHeight,
-                        "windowTop": panel.frame.maxY, "windowHeight": panel.frame.height,
+                        "windowX": panel.frame.minX, "windowTop": panel.frame.maxY, "windowHeight": panel.frame.height,
                         "rootHeight": presentation.view.bounds.height,
                         "hostingHeight": presentation.host.view.frame.height,
+                        "headerInRootX": presentation.view.convert(current.header.bounds, from: current.header).minX,
                         "headerInRootY": presentation.view.convert(current.header.bounds, from: current.header).minY,
                         "shellInRootY": presentation.view.convert(current.bounds, from: current).minY,
+                        "xError": actual.minX - headerInScreen.minX,
+                        "topError": actual.maxY - headerInScreen.maxY,
                         "error": max(abs(actual.minX - headerInScreen.minX), abs(actual.maxY - headerInScreen.maxY),
                                      abs(actual.width - headerInScreen.width), abs(actual.height - headerInScreen.height))])
                 }
@@ -156,8 +169,9 @@ import Foundation
                 try require(!preparationSamples.isEmpty, "未采集到目标行高的真实准备阶段布局")
                 try JSONSerialization.data(withJSONObject: headerPositions, options: [.prettyPrinted, .sortedKeys])
                     .write(to: directory.appendingPathComponent("header-position-\(month)-\(mode.rawValue).json"))
-                try require(headerPositions.allSatisfy { ($0["error"] as! CGFloat) < 0.01 },
-                            "准备阶段顶部发生位移：\(headerPositions.map { $0["error"]! })")
+                let changedHeader = headerPositions.first { ($0["error"] as! CGFloat) >= 0.01 }
+                try require(changedHeader == nil,
+                            "准备阶段页眉屏幕矩形发生变化：月份=\(month)，模式=\(mode)，样本=\(String(describing: changedHeader))")
                 headerPhase = "animation"
                 if mode == .compact || mode == .dots {
                     try require(events.revision == revision && presentation.retargetCount == retargets,
