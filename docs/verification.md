@@ -32,6 +32,10 @@ python3 scripts/run-smoke.py "$PWD/build/agenda-smoke" --calendar-agenda-smoke
 
 仅验证日程内容及其展开交互时，可使用 `--calendar-agenda-content-smoke` 运行上述内容检查（包括标题点击、渐隐、分隔线、固定窗口、内部滚动和边缘动画），不执行前置的跨月返回今天及弹窗重开导航检查。完整导航覆盖仍使用 `--calendar-agenda-smoke`，内容检查通过不能代替导航结果。
 
+当天日程专项同时输出 `agenda-genie.json` 和 `agenda-genie-{light,dark}-{1,7}-{opening,closing}-{frame}.png`（0–48 帧，每两帧保存一次）。仅检查此动画可运行 `python3 scripts/run-smoke.py "$PWD/build/agenda-genie-smoke" --calendar-agenda-genie-smoke`。通过十一月 1 日与 7 日的生产日期按钮覆盖左右列对应的详情灰底顶部起点（整周内容下方 8 pt）、展开与收起中间态、固定窗口、活动动画反向连续性，以及减少动态效果回退。`agenda-genie-origin-{detailed,compact,dots}-{empty,other-day}-{opening,closing}.png` 另覆盖整周无标记和仅其他日期有标记时的起点。截图需人工核对曲面方向、上方留白、半透明背景接缝和文字交接；移除日期起点后必须在“缺少日期起点曲面”检查失败，恢复旧的日期灰底下缘起点必须在 8 pt 对齐断言失败。报告另记录同步绘制的中位数与第 95 百分位耗时；在深浅色展开／收起中间帧及展开终点，采样动画与原生详情的空白背景像素，对比预乘颜色和透明度（误差不超过 2/255）。临时让内容快照重新包含背景时，颜色一致性断言必须失败。采样使用受控动画时钟，不证明物理屏幕帧率。
+
+追加 `--capture-agenda-window` 可验证真实窗口合成：`python3 scripts/run-smoke.py "$PWD/build/agenda-window-smoke" --calendar-agenda-genie-smoke --capture-agenda-window`。面板通过生产锚定入口放到可用倍率最高的屏幕，采样前不调用离屏缓存绘制，以保留真实屏幕绘制路径。窗口服务器截图保存为 `agenda-window-{light,dark}-{1,7}-{8,48,native}.png`，比较展开第 8、48 帧与交接后的原生详情背景 RGB，容差为 3/255，以容纳材质背景随采样位置产生的小幅差异；结果写入 `agenda-genie.json`。人工核对文字重影、色条颜色和交接。旧的屏幕直接条带绘制必须在此颜色断言失败；普通离屏检查不能证明真实窗口合成一致。需要已登录图形会话且窗口图像可采集，不代表所有屏幕倍率或物理刷新率。
+
 日程列表的鼠标位置与滚轮分发提供独立专项：
 
 ```sh
