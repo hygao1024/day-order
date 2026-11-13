@@ -148,7 +148,8 @@ final class CalendarDayAgendaView: NSView {
                                 y: bounds.minY + CalendarDayAgendaLayout.backgroundTopInset, width: bounds.width - 1,
                                 height: bounds.height - CalendarDayAgendaLayout.backgroundTopInset
                                     - CalendarDayAgendaLayout.backgroundBottomInset)
-        let shape = NSBezierPath(roundedRect: background, xRadius: 8, yRadius: 8)
+        let radius = min(8, background.height / 2)
+        let shape = NSBezierPath(roundedRect: background, xRadius: radius, yRadius: radius)
         CalendarSurface.selectionBackgroundColor.setFill()
         shape.fill()
     }

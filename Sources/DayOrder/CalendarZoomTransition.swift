@@ -84,7 +84,7 @@ private struct CalendarModeElement {
     let frame: CGRect
     let image: CalendarModeImage?
     var markers: [CalendarEventMarker] = []
-    var agendaOriginID: Int?
+    var isAgenda = false
 }
 
 private struct CalendarZoomSnapshot {
@@ -318,7 +318,7 @@ private struct CalendarZoomSnapshot {
                     elements.append(CalendarModeElement(id: -(row + 1), frame: agendaFrame,
                         image: CalendarModeImage(image: content,
                             offset: CGPoint(x: aligned.minX - agendaFrame.minX, y: aligned.minY - agendaFrame.minY)),
-                        agendaOriginID: buttons.firstIndex(where: { $0.date == week.agendaView.date }).map { row * 8 + $0 }))
+                        isAgenda: true))
                 }
                 let inset = CalendarTimelineView.contentInset
                 elements.append(CalendarModeElement(id: row * 8 + 7,
@@ -450,6 +450,8 @@ final class CalendarPresentationController: NSViewController {
     private(set) var preparationPhases: [String: Double] = [:]
     private(set) var frameMilliseconds: [Double] = []
     private(set) var drawingMilliseconds: [Double] = []
+    private(set) var agendaFrameTrace: [[String: Double]] = []
+    private(set) var handoffMilliseconds = 0.0
     var matchedDayCount: Int { overlay?.matchedDayCount ?? 0 }
     var movingDayFrame: NSRect? { overlay?.movingDayFrame }
     var movingCardFrame: NSRect? { overlay?.cardFrame }
@@ -589,7 +591,10 @@ final class CalendarPresentationController: NSViewController {
         displayLink?.invalidate()
         displayLink = nil
         #if DEBUG
-        if let overlay { drawingMilliseconds = overlay.drawingMilliseconds }
+        if let overlay {
+            drawingMilliseconds = overlay.drawingMilliseconds
+            agendaFrameTrace = overlay.agendaFrameTrace
+        }
         #endif
         overlay?.removeFromSuperview()
         overlay = nil
@@ -664,6 +669,8 @@ final class CalendarPresentationController: NSViewController {
         displayTimestamps = []
         frameMilliseconds = []
         drawingMilliseconds = []
+        agendaFrameTrace = []
+        handoffMilliseconds = 0
         #endif
         let parts = model.engine.calendar.dateComponents([.year, .month], from: model.overviewFocusMonth ?? model.month)
         let month = parts.year! * 100 + parts.month!
@@ -824,6 +831,8 @@ final class CalendarPresentationController: NSViewController {
 
     private func finishTransition() {
         #if DEBUG
+        let handoffStarted = ProcessInfo.processInfo.systemUptime
+        defer { handoffMilliseconds = (ProcessInfo.processInfo.systemUptime - handoffStarted) * 1000 }
         handoffDateError = overlay?.detailHandoffError
         #endif
         cancelTransition()
@@ -1091,18 +1100,15 @@ private final class CalendarModeGrid {
         var destination: CalendarModeImage?
         var sourceOpacity: CGFloat
         var destinationOpacity: CGFloat
-        var agendaOriginID: Int?
+        var isAgenda = false
         var reveal = CalendarSpringValue<CGFloat>(1)
+        var agendaReveal: CalendarAgendaReveal?
 
-        func draw(fraction: CGFloat, scale: CGFloat, origin: CGRect? = nil) {
+        func draw(fraction: CGFloat, scale: CGFloat) {
             let rect = frame.value
             guard let context = NSGraphicsContext.current?.cgContext else { return }
             context.saveGState()
             defer { context.restoreGState() }
-            if let origin {
-                drawAgenda(fraction: fraction, scale: scale, origin: origin)
-                return
-            }
             context.clip(to: rect)
             if source == nil && destination == nil {
                 let opacity = sourceOpacity * (1 - fraction) + destinationOpacity * fraction
@@ -1118,68 +1124,27 @@ private final class CalendarModeGrid {
             context.endTransparencyLayer()
         }
 
-        // 只扭曲过渡快照；原生列表仍拥有文字选择、滚动与无障碍语义。
-        func drawAgenda(fraction: CGFloat, scale: CGFloat, origin: CGRect) {
-            let rect = frame.value
-            guard reveal.value > 0.0001, rect.width > 0, rect.height > 0 else { return }
-            let area = CGRect(x: floor(rect.minX * scale) / scale, y: floor(rect.minY * scale) / scale,
-                              width: ceil(rect.maxX * scale) / scale - floor(rect.minX * scale) / scale,
-                              height: ceil(rect.maxY * scale) / scale - floor(rect.minY * scale) / scale)
-            let image = NSImage(size: area.size, flipped: true) { _ in
-                guard let bitmapContext = NSGraphicsContext.current?.cgContext else { return false }
-                bitmapContext.saveGState()
-                defer { bitmapContext.restoreGState() }
-                bitmapContext.translateBy(x: -area.minX, y: -area.minY)
-                drawAgendaContents(fraction: fraction, scale: scale, origin: origin, context: bitmapContext)
-                return true
+        mutating func prepareAgendaReveal(scale: CGFloat, appearance: NSAppearance) -> Bool {
+            guard isAgenda else { return true }
+            func snapshot(_ content: CalendarModeImage?, size: CGSize) -> NSImage? {
+                guard let content else { return nil }
+                let image = NSImage(size: size, flipped: true) { _ in
+                    content.draw(at: .zero, scale: scale, operation: .sourceOver, fraction: 1)
+                    return true
+                }
+                var raster: NSImage?
+                appearance.performAsCurrentDrawingAppearance {
+                    raster = CalendarSnapshotImage.rasterized(image, scale: scale)
+                }
+                return raster
             }
-            // 曲面在透明位图内完成；屏幕仅合成一次，避免 Retina 屏幕上下文重复混合细条。
-            let raster = CalendarSnapshotImage.rasterized(image, scale: scale) ?? image
-            raster.draw(in: area, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            agendaReveal = CalendarAgendaReveal(source: snapshot(source, size: frame.value.size),
+                destination: snapshot(destination, size: frame.target.size))
+            return agendaReveal != nil
         }
 
-        private func drawAgendaContents(fraction: CGFloat, scale: CGFloat, origin: CGRect, context: CGContext) {
-            let rect = frame.value
-            let progress = min(1, max(0, reveal.value))
-            guard progress > 0.0001, rect.width > 0, rect.height > 0 else { return }
-            let content = compositedImage(fraction: fraction, scale: scale)
-            func paint() {
-                content?.draw(at: rect.origin, scale: scale, operation: .sourceOver, fraction: 1)
-            }
-            // 按当前位图上下文的物理像素裁切，避免相邻条带重叠。
-            let pixelHeight = abs(context.convertToUserSpace(CGSize(width: 0, height: 1)).height)
-            let deviceTop = context.convertToDeviceSpace(CGPoint(x: rect.minX,
-                y: origin.maxY + (rect.minY - origin.maxY) * progress))
-            let top = context.convertToUserSpace(CGPoint(x: deviceTop.x, y: deviceTop.y.rounded())).y
-            let height = rect.height * progress
-            let strips = Int(ceil(height / pixelHeight))
-            func deform(_ draw: () -> Void) {
-                if progress >= 0.9999 {
-                    context.saveGState()
-                    context.clip(to: rect)
-                    draw()
-                    context.restoreGState()
-                    return
-                }
-                context.setShouldAntialias(false)
-                for index in 0..<strips {
-                    let t = (CGFloat(index) + 0.5) / CGFloat(strips)
-                    let spread = smoothstep(progress * (1 + 0.85 * sin(t * .pi / 2)))
-                    let left = origin.minX + (rect.minX - origin.minX) * spread
-                    let width = origin.width + (rect.width - origin.width) * spread
-                    // 按目标像素分条，避免半透明底色在小于一像素的接缝重复混合。
-                    let y = top + CGFloat(index) * pixelHeight
-                    context.saveGState()
-                    context.clip(to: CGRect(x: left, y: y, width: width, height: pixelHeight))
-                    context.translateBy(x: left, y: top)
-                    context.scaleBy(x: width / rect.width, y: progress)
-                    context.translateBy(x: -rect.minX, y: -rect.minY)
-                    draw()
-                    context.restoreGState()
-                }
-            }
-            deform { CalendarDayAgendaView.drawBackground(in: rect) }
-            deform(paint)
+        func drawAgenda(fraction: CGFloat) {
+            agendaReveal?.draw(in: frame.value, progress: reveal.value, fraction: fraction)
         }
 
         mutating func retargetMarkers(_ destination: [CalendarEventMarker]) {
@@ -1218,8 +1183,8 @@ private final class CalendarModeGrid {
 
         func compositedImage(fraction: CGFloat, scale: CGFloat) -> CalendarModeImage? {
             guard source != nil || destination != nil else { return nil }
-            // 重定向保留未扭曲底图，形状与速度单独接续，避免把已变形图像再次扭曲。
-            if agendaOriginID != nil {
+            // 重定向保留原尺寸底图，展开进度与速度单独接续，避免重复裁切快照。
+            if isAgenda {
                 if source == nil { return destination }
                 if destination == nil { return source }
             }
@@ -1253,7 +1218,7 @@ private final class CalendarModeGrid {
         for element in source.modeElements ?? [] {
             var cell = Cell(frame: CalendarSpringValue(element.frame), source: element.image,
                             destination: element.image, sourceOpacity: 1, destinationOpacity: 1,
-                            agendaOriginID: element.agendaOriginID)
+                            isAgenda: element.isAgenda)
             for marker in element.markers {
                 cell.markers[marker.id] = Marker(descriptor: marker, motion: CalendarSpringValue(marker.style))
             }
@@ -1261,8 +1226,19 @@ private final class CalendarModeGrid {
         }
     }
 
-    func retarget(_ destination: CalendarZoomSnapshot, from card: CGRect, fraction: CGFloat) -> Bool {
+    func retarget(_ destination: CalendarZoomSnapshot, from card: CGRect, fraction: CGFloat, appearance: NSAppearance) -> Bool {
         let next = Dictionary((destination.modeElements ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let previousFrames = cells.mapValues(\.frame)
+        func weekAnchor(for agendaID: Int) -> (previous: CalendarSpringValue<CGRect>, destination: CGRect)? {
+            let row = -agendaID - 1
+            for column in 0..<7 {
+                let id = row * 8 + column
+                if let previous = previousFrames[id], let destination = next[id]?.frame {
+                    return (previous, destination)
+                }
+            }
+            return nil
+        }
         #if DEBUG
         // 月份标题允许在视口边界露出一小部分；完整性采样只计七列日期和分隔线。
         targetCount = next.values.filter { $0.id % 8 < 7 || $0.image == nil }.count
@@ -1276,21 +1252,36 @@ private final class CalendarModeGrid {
                 cell.sourceOpacity = opacity
                 cell.destination = next[id]?.image
                 cell.destinationOpacity = next[id] == nil ? 0 : 1
-                cell.agendaOriginID = next[id]?.agendaOriginID ?? cell.agendaOriginID
-                if cell.agendaOriginID != nil { cell.reveal.target = next[id] == nil ? 0 : 1 }
+                cell.isAgenda = next[id]?.isAgenda ?? cell.isAgenda
+                if cell.isAgenda { cell.reveal.target = next[id] == nil ? 0 : 1 }
                 cell.frame.target = next[id]?.frame ?? Self.project(cell.frame.value, from: card, to: destination.card)
+                if cell.isAgenda, next[id] == nil, let anchor = weekAnchor(for: id) {
+                    // 退场详情没有目标快照；整卡投影无法表达其他周展开带来的周行位移。
+                    cell.frame.target.origin.y = cell.frame.value.minY
+                        + anchor.destination.minY - anchor.previous.value.minY
+                }
                 cell.retargetMarkers(next[id]?.markers ?? [])
+                guard cell.prepareAgendaReveal(scale: destination.backingScale, appearance: appearance) else { return false }
                 cells[id] = cell
             } else if let element = next[id] {
                 var frame = CalendarSpringValue(Self.project(element.frame, from: destination.card, to: card))
                 frame.target = element.frame
+                if element.isAgenda, let anchor = weekAnchor(for: id) {
+                    frame.value.origin.y = element.frame.minY + anchor.previous.value.minY - anchor.destination.minY
+                    var anchorVelocity = CGRect.zero
+                    anchorVelocity.animatableData = anchor.previous.velocity
+                    // 新详情从所属周当前的位置和纵向速度接续，不能提前跳到终点布局。
+                    let velocity = CGRect(x: 0, y: anchorVelocity.minY, width: 0, height: 0)
+                    frame.velocity = velocity.animatableData
+                }
                 var cell = Cell(frame: frame, source: nil, destination: element.image, sourceOpacity: 0, destinationOpacity: 1,
-                                agendaOriginID: element.agendaOriginID)
-                if element.agendaOriginID != nil {
+                                isAgenda: element.isAgenda)
+                if element.isAgenda {
                     cell.reveal = CalendarSpringValue(0)
                     cell.reveal.target = 1
                 }
                 cell.retargetMarkers(element.markers)
+                guard cell.prepareAgendaReveal(scale: destination.backingScale, appearance: appearance) else { return false }
                 cells[id] = cell
             }
         }
@@ -1312,7 +1303,7 @@ private final class CalendarModeGrid {
     func advance(_ spring: Spring, deltaTime: Double) {
         for id in Array(cells.keys) {
             cells[id]!.frame.advance(spring, by: deltaTime)
-            if cells[id]!.agendaOriginID != nil { cells[id]!.reveal.advance(spring, by: deltaTime) }
+            if cells[id]!.isAgenda { cells[id]!.reveal.advance(spring, by: deltaTime) }
             for key in Array(cells[id]!.markers.keys) {
                 cells[id]!.markers[key]!.motion.advance(spring, by: deltaTime)
             }
@@ -1320,8 +1311,8 @@ private final class CalendarModeGrid {
     }
     var isSettled: Bool {
         cells.values.allSatisfy {
-            $0.frame.isSettled && ($0.agendaOriginID == nil ||
-                (abs($0.reveal.value - $0.reveal.target) < 0.0001 && abs($0.reveal.velocity) < 0.01))
+            $0.frame.isSettled && (!$0.isAgenda ||
+                (abs($0.reveal.value - $0.reveal.target) < 0.001 && abs($0.reveal.velocity) < 0.04))
                 && $0.markers.values.allSatisfy { $0.motion.isSettled }
         }
     }
@@ -1333,12 +1324,11 @@ private final class CalendarModeGrid {
         renderedCells = [:]
         #endif
         for id in cells.keys.sorted() {
-            let origin = cells[id]!.agendaOriginID.flatMap { cells[$0]?.frame.value }.map {
-                CGRect(x: $0.minX + CalendarDayButton.feedbackInset,
-                       y: cells[id]!.frame.value.minY + CalendarDayAgendaLayout.backgroundTopInset,
-                       width: $0.width - 2 * CalendarDayButton.feedbackInset, height: 0)
+            if cells[id]!.isAgenda {
+                cells[id]!.drawAgenda(fraction: fraction)
+            } else {
+                cells[id]!.draw(fraction: fraction, scale: scale)
             }
-            cells[id]!.draw(fraction: fraction, scale: scale, origin: origin)
             cells[id]!.drawMarkers(dark: dark)
             #if DEBUG
             for (key, marker) in cells[id]!.markers {
@@ -1366,13 +1356,14 @@ private final class CalendarModeGrid {
                 "targetY": cells[id]!.frame.target.minY,
                 "opacity": (cells[id]!.source == nil ? 0 : 1 - fraction)
                     + (cells[id]!.destination == nil ? 0 : fraction)]
-            if let origin {
+            if cells[id]!.isAgenda {
                 renderedCells[id]!["reveal"] = cells[id]!.reveal.value
-                renderedCells[id]!["originX"] = origin.midX
-                renderedCells[id]!["originY"] = origin.maxY
-                renderedCells[id]!["originWidth"] = origin.width
                 renderedCells[id]!["contextScaleY"] = abs(NSGraphicsContext.current?.cgContext.ctm.d ?? 0)
                 renderedCells[id]!["snapshotScale"] = scale
+                if let sample = cells[id]!.agendaReveal?.sample(in: cells[id]!.frame.value,
+                    progress: cells[id]!.reveal.value) {
+                    renderedCells[id]!.merge(sample, uniquingKeysWith: { _, new in new })
+                }
                 if let bitmap = (cells[id]!.destination ?? cells[id]!.source)?.image.representations.first as? NSBitmapImageRep,
                    let color = bitmap.colorAt(x: Int(CGFloat(bitmap.pixelsWide) * 0.85), y: Int(CGFloat(bitmap.pixelsHigh) * 0.7)) {
                     renderedCells[id]!["contentAlpha"] = color.alphaComponent
@@ -1407,6 +1398,7 @@ private final class CalendarModeGrid {
 private final class CalendarZoomOverlay: NSView {
     #if DEBUG
     var drawingMilliseconds: [Double] = []
+    var agendaFrameTrace: [[String: Double]] = []
     var canvasMotion: (CGRect.AnimatableData, CGRect.AnimatableData)? {
         canvas.map { ($0.camera.value.animatableData, $0.camera.velocity) }
     }
@@ -1506,7 +1498,8 @@ private final class CalendarZoomOverlay: NSView {
         let nextModeGrid: CalendarModeGrid?
         if changesCalendarLayout, !nextReducedMotion, destination.modeElements != nil {
             nextModeGrid = modeGrid ?? (source.modeElements == nil ? nil : CalendarModeGrid(source: source))
-            if let nextModeGrid, !nextModeGrid.retarget(destination, from: card.value, fraction: contentFraction) { return false }
+            if let nextModeGrid, !nextModeGrid.retarget(destination, from: card.value, fraction: contentFraction,
+                                                      appearance: effectiveAppearance) { return false }
         } else { nextModeGrid = nil }
         modeGrid = nextModeGrid
         reducedMotion = nextReducedMotion
@@ -1547,7 +1540,16 @@ private final class CalendarZoomOverlay: NSView {
     override func draw(_ dirtyRect: NSRect) {
         #if DEBUG
         let drawingStarted = ProcessInfo.processInfo.systemUptime
-        defer { drawingMilliseconds.append((ProcessInfo.processInfo.systemUptime - drawingStarted) * 1000) }
+        defer {
+            let milliseconds = (ProcessInfo.processInfo.systemUptime - drawingStarted) * 1000
+            drawingMilliseconds.append(milliseconds)
+            if let sample = modeGrid?.renderedCells.values.first(where: { $0["reveal"] != nil }) {
+                agendaFrameTrace.append(["started": drawingStarted, "elapsed": elapsed,
+                    "drawingMS": milliseconds, "reveal": sample["reveal"]!,
+                    "visibleWidth": sample["visibleWidth"] ?? 0,
+                    "visibleHeight": sample["visibleHeight"] ?? 0])
+            }
+        }
         #endif
         let destination = destination ?? source
         NSGraphicsContext.saveGraphicsState()

@@ -276,13 +276,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.terminate(nil)
                 return
             }
-            if ProcessInfo.processInfo.arguments.contains("--calendar-agenda-genie-smoke") {
+            if ProcessInfo.processInfo.arguments.contains("--calendar-agenda-animation-smoke") {
                 guard let source = smokeCalendarSource, let presentation = presentationController else { throw CocoaError(.coderInvalidValue) }
-                try await CalendarAgendaGenieSmoke.verify(model: model, presentation: presentation,
+                try await CalendarAgendaAnimationSmoke.verify(model: model, presentation: presentation,
                     source: source, defaults: defaults, directory: directory) { view, name in
                     try self.saveViewSnapshot(view, name: name, to: directory)
                 }
-                try "日程曲面展开、收起、反向及减少动态效果检查通过。\n"
+                try "日程向下展开、收起、反向及减少动态效果检查通过。\n"
                     .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
                 NSApp.terminate(nil)
                 return

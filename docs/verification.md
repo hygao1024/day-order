@@ -32,9 +32,15 @@ python3 scripts/run-smoke.py "$PWD/build/agenda-smoke" --calendar-agenda-smoke
 
 仅验证日程内容及其展开交互时，可使用 `--calendar-agenda-content-smoke` 运行上述内容检查（包括标题点击、渐隐、分隔线、固定窗口、内部滚动和边缘动画），不执行前置的跨月返回今天及弹窗重开导航检查。完整导航覆盖仍使用 `--calendar-agenda-smoke`，内容检查通过不能代替导航结果。
 
-当天日程专项同时输出 `agenda-genie.json` 和 `agenda-genie-{light,dark}-{1,7}-{opening,closing}-{frame}.png`（0–48 帧，每两帧保存一次）。仅检查此动画可运行 `python3 scripts/run-smoke.py "$PWD/build/agenda-genie-smoke" --calendar-agenda-genie-smoke`。通过十一月 1 日与 7 日的生产日期按钮覆盖左右列对应的详情灰底顶部起点（整周内容下方 8 pt）、展开与收起中间态、固定窗口、活动动画反向连续性，以及减少动态效果回退。`agenda-genie-origin-{detailed,compact,dots}-{empty,other-day}-{opening,closing}.png` 另覆盖整周无标记和仅其他日期有标记时的起点。截图需人工核对曲面方向、上方留白、半透明背景接缝和文字交接；移除日期起点后必须在“缺少日期起点曲面”检查失败，恢复旧的日期灰底下缘起点必须在 8 pt 对齐断言失败。报告另记录同步绘制的中位数与第 95 百分位耗时；在深浅色展开／收起中间帧及展开终点，采样动画与原生详情的空白背景像素，对比预乘颜色和透明度（误差不超过 2/255）。临时让内容快照重新包含背景时，颜色一致性断言必须失败。采样使用受控动画时钟，不证明物理屏幕帧率。
+当天日程专项同时输出 `agenda-animation.json` 和 `agenda-animation-{light,dark}-{1,7}-{opening,closing}-{frame}.png`（0–48 帧，每两帧保存一次）。仅检查此动画可运行 `python3 scripts/run-smoke.py "$PWD/build/agenda-animation-smoke" --calendar-agenda-animation-smoke`。通过十一月 1 日与 7 日的生产日期按钮覆盖左右列的顶部锚点（整周内容下方 8 pt）、完整宽度向下展开的中间态、非线性进度、固定窗口、途中反向连续性，以及减少动态效果的短淡化。`agenda-animation-origin-{detailed,compact,dots}-{empty,other-day,markers}-{opening,closing}.png` 另覆盖整周无标记、仅其他日期有标记，以及所选日期多条标记时的顶部位置与完整宽度。
 
-追加 `--capture-agenda-window` 可验证真实窗口合成：`python3 scripts/run-smoke.py "$PWD/build/agenda-window-smoke" --calendar-agenda-genie-smoke --capture-agenda-window`。面板通过生产锚定入口放到可用倍率最高的屏幕，采样前不调用离屏缓存绘制，以保留真实屏幕绘制路径。窗口服务器截图保存为 `agenda-window-{light,dark}-{1,7}-{8,48,native}.png`，比较展开第 8、48 帧与交接后的原生详情背景 RGB，容差为 3/255，以容纳材质背景随采样位置产生的小幅差异；结果写入 `agenda-genie.json`。人工核对文字重影、色条颜色和交接。旧的屏幕直接条带绘制必须在此颜色断言失败；普通离屏检查不能证明真实窗口合成一致。需要已登录图形会话且窗口图像可采集，不代表所有屏幕倍率或物理刷新率。
+专项检查动画期间缓存快照数量不变，起点高度为零且始终保持详情完整宽度；逐帧验证向下展开从首个推进帧开始增长、非线性起步且无静止帧、顶边固定、底边不越过下方周分隔线。第 2、4、12 帧扫描实际像素宽度并与轮廓匹配，同时检查展开边缘下方透明；在深浅色展开／收起中间帧及终点比较原生背景的预乘颜色和透明度（误差不超过 2/255）。透明视图采样先清空缓冲区。临时恢复横向阶段的延迟增高时，首帧高度增长检查须失败；临时缩窄实际绘制轮廓时，像素宽度检查须失败。旧曲面的窄颈、底边先到、GPU 回退和整体等比缩放断言已随实现移除。
+
+真实刷新驱动覆盖 12 项列表展开、切到单项、切回 12 项及收起，以及单项列表独立展开和收起，检查内容数量、动画完成与驱动停止，生成 `agenda-live-{long-opening,switch-short,switch-long,long-closing,short-opening,short-closing}.png`。每个场景另输出 `agenda-frames-{场景}.json`，记录实际绘制开始时间、耗时、动画时间、展开进度及可见宽高；汇总准备时间、同步绘制耗时、绘制间隔、帧数及原生列表交接耗时。受控采样及实际绘制时间均不等于物理屏幕呈现耗时，不据此承诺跨设备帧率。
+
+跨周回归使用 15→8、8→15、22→8 和未结束便快速返回的 15→8→15→8，覆盖深浅色。逐帧比较日程顶边与所属周日期的距离，要求误差不超过一个设备像素，底边不能越过所属周分隔线；快速切换时位置和展开进度不得重置。`agenda-cross-week.json` 保存每帧关系，`agenda-cross-week-{外观}-{日期序列}-{步骤}-{帧}.png` 保存第 8、24、48 帧及交接后的 `native` 图像；窗口采集模式沿用同一命名。旧实现必须在跨周锚点误差检查失败。真实刷新驱动另外覆盖后周展开、切往前周、切往后周、返回及关闭，记录 `agenda-frames-cross-*.json`；交接后要求仅有当前日程，绘制层与刷新驱动已释放。几何检查与图像核对不代表所有月份、系统负载或物理屏幕呈现情况。
+
+专项默认通过生产锚定入口放到可用倍率最高的屏幕；追加 `--agenda-low-refresh-screen` 则选用可用刷新率最低的屏幕。报告保存实际屏幕倍率和最高刷新率，单屏环境不会模拟不存在的显示器。两者都可追加 `--capture-agenda-window` 检查真实窗口合成，例如 `python3 scripts/run-smoke.py "$PWD/build/agenda-window-smoke" --calendar-agenda-animation-smoke --capture-agenda-window`。窗口采集前不调用离屏缓存绘制，以保留真实屏幕路径。输出 `agenda-window-{light,dark}-{1,7}-{8,48,native}.png`，比较展开第 8、48 帧与交接后的原生详情背景 RGB（容差 3/255，容纳材质背景随位置产生的小幅差异）。人工核对直接向下展开、顶部锚点、圆角、文字与颜色交接。需要已登录图形会话且窗口图像可采集，不代表所有显示器和系统负载。
 
 日程列表的鼠标位置与滚轮分发提供独立专项：
 
