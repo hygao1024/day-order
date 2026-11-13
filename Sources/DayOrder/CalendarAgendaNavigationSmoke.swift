@@ -137,6 +137,11 @@ import DayOrderCore
                 try require(model.agenda?.date == model.today, "选中日期与展开日期不同时误收起了其他日程")
             }
             close()
+            let closeDeadline = Date().addingTimeInterval(2)
+            while presentation.view.window?.isVisible == true {
+                try require(Date() < closeDeadline, "弹窗淡出未完成")
+                try await Task.sleep(for: .milliseconds(5))
+            }
             try require(model.agenda == nil, "关闭弹窗未清除展开状态")
             reopen()
             try await settle()

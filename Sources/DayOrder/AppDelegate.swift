@@ -151,10 +151,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showPanel() {
         guard let button = statusItem?.button else { return }
-        refresh()
-        model?.showingSettings = false
-        model?.yearDraft = ""
-        model?.goToToday()
+        // 淡出尚未完成时再次点击只反向透明度，保留正在显示的页面与几何。
+        if !panel.isVisible {
+            refresh()
+            model?.showingSettings = false
+            model?.yearDraft = ""
+            model?.goToToday()
+        }
         NSApp.activate(ignoringOtherApps: true)
         panel.show(anchoredTo: button)
         panel.contentViewController?.view.window?.makeKey()
@@ -208,7 +211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         isTerminating = true
         NotificationCenter.default.removeObserver(self)
         NSWorkspace.shared.notificationCenter.removeObserver(self)
-        panel.close()
+        panel.closeImmediately()
         presentationController?.cancelTransition()
         model?.cancelHolidayUpdate()
         model?.events.stop()
@@ -378,6 +381,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.terminate(nil)
                 return
             }
+            if ProcessInfo.processInfo.arguments.contains("--panel-fade-smoke") {
+                guard let button = statusItem?.button else { throw CocoaError(.coderInvalidValue) }
+                try await CalendarPanelFadeSmoke.verify(panel: panel, anchor: button, model: model,
+                    defaults: defaults, directory: directory, toggle: { self.togglePanel() })
+                try "面板淡入淡出、快速反向、窗口合成、减少动态效果及关闭清理验证通过。\n"
+                    .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.arguments.contains("--panel-position-smoke") {
                 try await verifyPanelPosition(directory: directory)
                 try "面板切月、日期详情与月年过渡的顶部定位验证通过。\n"
@@ -387,6 +399,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if ProcessInfo.processInfo.arguments.contains("--panel-smoke") {
                 try await verifyPanel(directory: directory)
+                try await verifyReopen(directory: directory, domain: domain)
                 try "无箭头面板、尺寸锚定、内外点击、Esc、重复开关与关闭清理验证通过。\n"
                     .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
                 NSApp.terminate(nil)
@@ -579,6 +592,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try await saveSnapshot("blur-on-restored-light", to: directory)
             try await verifyRefreshNotifications()
             panel.performClose(nil)
+            try await waitForPanelHidden()
             guard !panel.isShown, keyboardMonitor == nil else { throw CocoaError(.coderInvalidValue) }
             try "真实状态栏弹窗、连续周滚动与跨月选择、滚动位置恢复、辅助功能动作、外观与节日快照、年概览导航、日期边界、关闭清理通过。\n"
                 .write(to: directory.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
@@ -902,6 +916,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try await saveSnapshot("panel-position-june", to: directory)
     }
 
+    private func waitForPanelHidden() async throws {
+        let deadline = Date().addingTimeInterval(2)
+        while panel.isVisible || panel.hasFadeDriver {
+            guard Date() < deadline else { throw NSError(domain: "DayOrder.Panel", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "面板淡出未结束或刷新驱动未清理"]) }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
     private func verifyPanel(directory: URL) async throws {
         guard let presentation = presentationController, let button = statusItem?.button,
               let statusWindow = button.window else { throw CocoaError(.coderInvalidValue) }
@@ -940,12 +963,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try await click(panel, at: NSPoint(x: 2, y: 2))
         try check(panel.isShown, "点击面板内部不应关闭")
         try await click(statusWindow, at: button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil))
+        try await waitForPanelHidden()
         try check(!panel.isShown && keyboardMonitor == nil && !panel.hasDismissalMonitors, "再次点击图标应关闭且清理监控")
         for _ in 0..<3 {
             button.performClick(nil)
             try check(panel.isShown && panel.hasDismissalMonitors && keyboardMonitor != nil, "图标应重新打开面板")
             panel.close()
             panel.close()
+            try await waitForPanelHidden()
             try check(!panel.hasDismissalMonitors && keyboardMonitor == nil, "重复关闭必须保持清理完成")
         }
         showPanel()
@@ -956,6 +981,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isARepeat: false, keyCode: 53) else { throw CocoaError(.coderInvalidValue) }
         NSApp.postEvent(escape, atStart: false)
         try await Task.sleep(for: .milliseconds(100))
+        try await waitForPanelHidden()
         try check(!panel.isShown && !panel.hasDismissalMonitors, "Esc 应关闭月历并清理")
         showPanel()
         let outside = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 20, height: 20),
@@ -963,9 +989,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         outside.isReleasedWhenClosed = false
         defer { outside.close() }
         try await click(outside, at: NSPoint(x: 10, y: 10))
+        try await waitForPanelHidden()
         try check(!panel.isShown && keyboardMonitor == nil, "点击其他窗口应关闭面板")
         showPanel()
         NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: NSApp)
+        try await waitForPanelHidden()
         try check(!panel.isShown && !panel.hasDismissalMonitors, "切换应用应关闭并清理")
         showPanel()
         NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
@@ -990,6 +1018,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             model.today = model.engine.addingDays(-1, to: model.engine.today())
             panel.performClose(nil)
+            try await waitForPanelHidden()
             togglePanel()
             let today = model.engine.today()
             guard panel.isShown, !model.showingSettings, !model.showingYearOverview,

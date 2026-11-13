@@ -413,6 +413,7 @@ import Foundation
         try await prepared()
         presentation.sampleGeometry(deltaTime: 0.05)
         panel.close()
+        try await wait { !panel.isVisible && !panel.hasFadeDriver }
         try require(!presentation.isTransitioning && !presentation.hasActiveFrameDriver && presentation.shell?.content.alphaValue == 1,
                     "关闭没有清理缩放或恢复正文")
         reopen()

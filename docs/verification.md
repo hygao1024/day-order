@@ -80,7 +80,7 @@ python3 scripts/run-smoke.py "$PWD/build/calendar-marker-morph-smoke" --calendar
 python3 scripts/run-smoke.py "$PWD/build/calendar-mode-animation-smoke" --calendar-mode-animation-smoke
 ```
 
-该检查通过生产面板入口锚定到隐藏的固定窗口，排除系统菜单栏重排造成的整窗平移；真实菜单栏跟随另由[面板顶部位置专项](#无箭头面板)覆盖。在点击前安装真实布局观察器，从布局准备、逐帧运动到交接结束比较整块页眉的屏幕坐标，原误差阈值保持 0.01 pt，生成 `header-position-{月份}-{模式}.json`，包含窗口横坐标 `windowX`、页眉相对根视图的横坐标 `headerInRootX` 以及 `xError`／`topError`。主动横移锚窗口 2 pt 可复现整窗移动而内部位置不变的情形；固定锚点后临时注入页眉自身 2 pt 横移仍须失败。`header-position-rapid.json` 和 `header-position-live.json` 分别记录快速连点与真实刷新回调的顶部误差。旧实现的准备阶段会被此检查捕获到高度差一半的临时居中位移。检查通过生产按钮切档，使用真实视图的受控时间绘制生成 `mode-motion.json` 和起点、中间、终点快照，覆盖四至六周月份、深浅色与自由滚动位置、非线性高度变化、日期格连续绘制、面板顶部锚定、底栏跟随、连续切档的位置与速度接续、设置交接、导航及关闭取消和减少动态效果；接续误差在重定向瞬间测量，允许新终点准备期间继续运动；另验证真实显示刷新回调能够完成并停止。像素检查比较切档前后未变化的页眉／底栏文字，检查相同事件结果不触发重复过渡，以及动画日期底图与真实日期视图的交接差异；`mode-retarget-pixels.json` 记录快速连点重定向瞬间的正文像素差。另以 `mode-static-pixels-{月份}.json` 记录同步冻结画面和减少动态效果终点与真实视图的像素误差（`frozenPixelError`、`targetPixelError`），四档均须小于 0.1；`mode-static-{月份}-{模式}.png` 保存静态终点。其余误差记录为 `headerPixelError`、`footerPixelError`、`handoffPixelError`，采用预乘透明度的 RGBA（红绿蓝及透明度）通道平均绝对差，数值范围为 0–255。快照和主线程几何采样不代表物理帧率、所有显示器刷新率或真实触控板手感。
+该检查通过生产面板入口锚定到隐藏的固定窗口，排除系统菜单栏重排造成的整窗平移；真实菜单栏跟随另由[面板顶部位置专项](#无箭头面板)覆盖。在点击前安装真实布局观察器，从布局准备、逐帧运动到交接结束比较整块页眉的屏幕坐标，原误差阈值保持 0.01 pt，生成 `header-position-{月份}-{模式}.json`，包含窗口横坐标 `windowX`、页眉相对根视图的横坐标 `headerInRootX` 以及 `xError`／`topError`。主动横移锚窗口 2 pt 可复现整窗移动而内部位置不变的情形；固定锚点后临时注入页眉自身 2 pt 横移仍须失败。`header-position-rapid.json` 和 `header-position-live.json` 分别记录快速连点与真实刷新回调的顶部误差。旧实现的准备阶段会被此检查捕获到高度差一半的临时居中位移。检查通过生产按钮切档，使用真实视图的受控时间绘制生成 `mode-motion.json` 和起点、中间、终点快照，覆盖四至六周月份、深浅色与自由滚动位置、非线性高度变化、日期格连续绘制、面板顶部锚定、底栏跟随、连续切档的位置与速度接续、设置交接、导航、完全淡出后的关闭清理和减少动态效果；接续误差在重定向瞬间测量，允许新终点准备期间继续运动；另验证真实显示刷新回调能够完成并停止。像素检查比较切档前后未变化的页眉／底栏文字，检查相同事件结果不触发重复过渡，以及动画日期底图与真实日期视图的交接差异；`mode-retarget-pixels.json` 记录快速连点重定向瞬间的正文像素差。另以 `mode-static-pixels-{月份}.json` 记录同步冻结画面和减少动态效果终点与真实视图的像素误差（`frozenPixelError`、`targetPixelError`），四档均须小于 0.1；`mode-static-{月份}-{模式}.png` 保存静态终点。其余误差记录为 `headerPixelError`、`footerPixelError`、`handoffPixelError`，采用预乘透明度的 RGBA（红绿蓝及透明度）通道平均绝对差，数值范围为 0–255。快照和主线程几何采样不代表物理帧率、所有显示器刷新率或真实触控板手感。
 
 仅检查按钮循环与权限边界时可运行短专项，不执行其他界面回归：
 
@@ -119,7 +119,15 @@ python3 scripts/run-smoke.py "$PWD/build/refresh-notifications-smoke" --refresh-
 python3 scripts/run-smoke.py "$PWD/build/panel-smoke" --panel-smoke
 ```
 
-该检查覆盖无边框外框与内容尺寸一致、月年切换顶部锚定、面板内部点击、图标再次点击关闭、重复开关、Esc、同进程外部窗口点击、失活与屏幕变化通知后的关闭和监控清理；生成 `panel-light.png`、`panel-dark.png` 和 `panel-year.png`。普通冒烟也包含此检查。跨应用物理点击、原生设置菜单、多显示器与全屏空间需要桌面交互检查；合成通知不等同于真实切换显示器或桌面空间。
+该检查覆盖无边框外框与内容尺寸一致、月年切换顶部锚定、面板内部点击、图标再次点击关闭、重复开关、Esc、同进程外部窗口点击、失活与屏幕变化通知后的关闭和监控清理；关闭相关断言等待窗口真正隐藏，另覆盖从异月、设置及年份草稿页面完全关闭后重开回到今天；生成 `panel-light.png`、`panel-dark.png` 和 `panel-year.png`。普通冒烟也包含此检查。跨应用物理点击、原生设置菜单、多显示器与全屏空间需要桌面交互检查；合成通知不等同于真实切换显示器或桌面空间。
+
+面板淡入淡出提供专项检查：
+
+```sh
+python3 scripts/run-smoke.py "$PWD/build/panel-fade-smoke" --panel-fade-smoke
+```
+
+该检查通过生产打开／关闭动作，验证完整淡入约 140 ms、淡出约 90 ms、非线性透明度中间态、窗口几何不变、快速反向保留透明度与页面、重复关闭只清理一次、减少动态效果和动画中途开启该偏好。实际窗口服务器透明度须与应用值相符（容差 0.02），生成含开关生命周期轨迹的 `panel-fade.json` 及 `panel-fade-{light,dark}-{opening,closing}.png`。真实显示刷新回调另验证可见中间态、完成与取消后停止驱动；屏幕通知在淡出期间、桌面通知在淡入期间都须立即隐藏并清理。临时跳过淡入淡出时，起步透明度检查须失败。专项先等待菜单栏锚点连接屏幕；合成通知、受控进度与窗口图像不代表所有显示器、系统负载、物理点击或主观手感。
 
 面板顶部位置另有专项检查：
 
